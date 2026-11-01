@@ -37,8 +37,11 @@ cd src-tauri && cargo fmt --all --check && cargo clippy --all-targets -- -D warn
 ## Build a local app
 
 ```bash
-npm run tauri build --bundles app
+npx tauri build --bundles app
 ```
+
+> Note: `npm run tauri build --bundles app` does **not** work — npm consumes `--bundles` as its
+> own config flag and passes `app` to `cargo`, which fails with `unexpected argument 'app'`.
 
 The build is **ad-hoc signed** (`signingIdentity: "-"`). There is no Apple Developer ID and no
 notarization, because this app targets the developer's own machine. See

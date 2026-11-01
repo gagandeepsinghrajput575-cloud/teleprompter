@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Baseline capability set for the HUD window.","local":true,"windows":["hud"],"permissions":["core:default"]}}
+{"default":{"identifier":"default","description":"Baseline capability set for the HUD window.","local":true,"windows":["hud"],"permissions":["core:default","core:window:allow-set-position"]}}

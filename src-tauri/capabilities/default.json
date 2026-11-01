@@ -3,5 +3,8 @@
   "identifier": "default",
   "description": "Baseline capability set for the HUD window.",
   "windows": ["hud"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-position"
+  ]
 }

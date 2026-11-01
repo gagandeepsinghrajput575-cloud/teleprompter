@@ -256,6 +256,14 @@ fn set_click_through(
     Ok(report(&window))
 }
 
+/// Records what the frontend's drag handler did. Dragging used to fail silently, so the
+/// outcome is logged rather than trusted.
+#[tauri::command]
+fn drag_probe(mode: String, detail: String) {
+    println!("DRAG_RESULT mode={mode} detail={detail}");
+    let _ = std::io::stdout().flush();
+}
+
 #[tauri::command]
 fn hud_state() -> HudState {
     HudState {
@@ -656,7 +664,8 @@ pub fn run() {
             audio_level,
             script_lines,
             hud_state,
-            input_probe
+            input_probe,
+            drag_probe
         ])
         .on_window_event(|window, event| {
             // Dragging and resizing fire continuously; just record the latest placement and
@@ -769,6 +778,34 @@ pub fn run() {
                             let _ = std::io::stdout().flush();
                         }
                     });
+                });
+            }
+
+            // Test hook: assert that a drag gesture actually moves the window. The gesture is
+            // posted from the main thread but drained by the run loop afterwards, so the
+            // position is re-read from a background thread once the queue has emptied.
+            if std::env::var("STEALTH_DRAG_TEST").is_ok() {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(6000));
+                    let Some(win) = handle.get_webview_window("hud") else {
+                        return;
+                    };
+                    let before = win.outer_position().map(|p| (p.x, p.y)).ok();
+                    let inner = handle.clone();
+                    let _ = handle.run_on_main_thread(move || {
+                        if let Some(w) = inner.get_webview_window("hud") {
+                            println!("DRAG_TEST inject {}", overlay_macos::inject_drag(&w));
+                            let _ = std::io::stdout().flush();
+                        }
+                    });
+                    std::thread::sleep(Duration::from_millis(2000));
+                    let after = win.outer_position().map(|p| (p.x, p.y)).ok();
+                    println!(
+                        "DRAG_TEST before={before:?} after={after:?} moved={}",
+                        before != after
+                    );
+                    let _ = std::io::stdout().flush();
                 });
             }
 

@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { cueChips } from "./lib/cues";
 import { loadScript } from "./lib/script";
 import fixture from "./fixtures/remodeler_script.json";
@@ -119,25 +120,85 @@ export default function App() {
       ? "STAGE 1 (LOCAL)"
       : "MANUAL";
 
+  // Dragging is implemented here rather than with `data-tauri-drag-region`, because that
+  // attribute is handled by an injected script that calls `plugin:window|start_dragging`
+  // without awaiting it. That call is denied unless `core:window:allow-start-dragging` is
+  // granted, and the denial was completely silent: the attribute matched, the mousedown
+  // fired, and nothing moved with no error anywhere. Moving the window ourselves is a few
+  // lines, needs only `core:window:allow-set-position`, and can be observed and logged.
+  const onDragStart = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      if (!editMode || e.button !== 0) return;
+      // Let real controls win: dragging must never swallow a button press.
+      if ((e.target as HTMLElement).closest("button, input, select, textarea, a")) return;
+
+      const win = getCurrentWindow();
+      const originX = e.clientX;
+      const originY = e.clientY;
+      // Pointer deltas are CSS pixels; window positions are physical pixels.
+      const dpr = window.devicePixelRatio || 1;
+      let start: PhysicalPosition | null = null;
+      let pending: PhysicalPosition | null = null;
+      let frame = 0;
+
+      const flush = () => {
+        frame = 0;
+        if (!pending) return;
+        const next = pending;
+        pending = null;
+        win.setPosition(next).catch((err) => {
+          invoke("drag_probe", { mode: "manual-error", detail: String(err) }).catch(
+            () => undefined,
+          );
+        });
+      };
+
+      const move = (ev: PointerEvent) => {
+        if (!start) return;
+        pending = new PhysicalPosition(
+          Math.round(start.x + (ev.clientX - originX) * dpr),
+          Math.round(start.y + (ev.clientY - originY) * dpr),
+        );
+        if (!frame) frame = requestAnimationFrame(flush);
+      };
+
+      const up = () => {
+        if (frame) cancelAnimationFrame(frame);
+        frame = 0;
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        flush();
+      };
+
+      win
+        .outerPosition()
+        .then((pos) => {
+          start = pos;
+          invoke("drag_probe", { mode: "manual", detail: `from ${pos.x},${pos.y}` }).catch(
+            () => undefined,
+          );
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {
+            // Capture is a nicety; window-level listeners still track the drag.
+          }
+          window.addEventListener("pointermove", move);
+          window.addEventListener("pointerup", up, { once: true });
+        })
+        .catch((err) => {
+          invoke("drag_probe", { mode: "no-position", detail: String(err) }).catch(
+            () => undefined,
+          );
+        });
+    },
+    [editMode],
+  );
+
   return (
-    <div
-      className="hud"
-      data-edit={editMode}
-      // `deep` makes the whole card a drag handle while unlocked. Tauri's drag script skips
-      // buttons, so Start/Stop stay clickable; a bare attribute would only respond to clicks
-      // landing on this element itself, which is why only the grab bar used to drag.
-      data-tauri-drag-region={editMode ? "deep" : undefined}
-    >
+    <div className="hud" data-edit={editMode} onPointerDown={onDragStart}>
       {editMode && (
-        <div
-          className="grab"
-          data-tauri-drag-region
-          title="Drag to reposition"
-          onPointerDown={() => {
-            invoke("input_probe", { kind: "grab" }).catch(() => undefined);
-          }}
-        >
-          <span className="grab-dots" data-tauri-drag-region />
+        <div className="grab" title="Drag to reposition">
+          <span className="grab-dots" />
         </div>
       )}
       <div className="bar">

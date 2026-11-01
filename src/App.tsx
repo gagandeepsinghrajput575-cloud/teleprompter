@@ -32,6 +32,17 @@ export default function App() {
     };
   }, []);
 
+  // Reports the first pointer event that reaches the webview. This is the only proof that
+  // the OS delivered a click, as opposed to merely permitting one, and it needs no
+  // Accessibility permission to synthesise input.
+  useEffect(() => {
+    const probe = () => {
+      invoke("input_probe", { kind: "pointerdown" }).catch(() => undefined);
+    };
+    window.addEventListener("pointerdown", probe, { capture: true, once: true });
+    return () => window.removeEventListener("pointerdown", probe, { capture: true });
+  }, []);
+
   // Live pipeline events emitted from Rust.
   useEffect(() => {
     const unlisteners = [
@@ -109,9 +120,23 @@ export default function App() {
       : "MANUAL";
 
   return (
-    <div className="hud" data-edit={editMode}>
+    <div
+      className="hud"
+      data-edit={editMode}
+      // `deep` makes the whole card a drag handle while unlocked. Tauri's drag script skips
+      // buttons, so Start/Stop stay clickable; a bare attribute would only respond to clicks
+      // landing on this element itself, which is why only the grab bar used to drag.
+      data-tauri-drag-region={editMode ? "deep" : undefined}
+    >
       {editMode && (
-        <div className="grab" data-tauri-drag-region title="Drag to reposition">
+        <div
+          className="grab"
+          data-tauri-drag-region
+          title="Drag to reposition"
+          onPointerDown={() => {
+            invoke("input_probe", { kind: "grab" }).catch(() => undefined);
+          }}
+        >
           <span className="grab-dots" data-tauri-drag-region />
         </div>
       )}

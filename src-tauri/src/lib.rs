@@ -16,10 +16,33 @@ mod overlay_macos;
 
 use tracker::Tracker;
 
-/// Click-through is ON by default: the HUD must never eat a click meant for Meet or the
-/// browser. `Cmd+Shift+E` flips it off into edit mode (drag, click Start), because a
-/// click-through window with no escape hatch cannot be interacted with at all.
-static CLICK_THROUGH: AtomicBool = AtomicBool::new(true);
+/// Click-through is OFF at launch: a HUD that starts transparent to input looks broken,
+/// because nothing in it can be clicked and the grab bar is not even rendered. Locking is
+/// always an explicit act (`Cmd+Shift+E`, or the menu bar item) taken before a call.
+static CLICK_THROUGH: AtomicBool = AtomicBool::new(false);
+
+/// Set once, so the log shows the single click that proves pointer events reach the webview.
+static POINTER_SEEN: AtomicBool = AtomicBool::new(false);
+
+/// Held so the lock state can be shown in the menu bar. Once the HUD is click-through there
+/// is no on-screen affordance left to tell you it is locked.
+static TRAY: Mutex<Option<tauri::tray::TrayIcon>> = Mutex::new(None);
+
+/// Mirrors the current input mode into the menu bar title and tooltip.
+fn refresh_tray() {
+    let locked = CLICK_THROUGH.load(Ordering::Relaxed);
+    if let Ok(guard) = TRAY.lock() {
+        if let Some(tray) = guard.as_ref() {
+            let _ = tray.set_title(Some(if locked { "🔒" } else { "🔓" }));
+            let _ = tray.set_tooltip(Some(if locked {
+                "StealthPrompter - locked, clicks pass through"
+            } else {
+                "StealthPrompter - unlocked, clickable"
+            }));
+            println!("TRAY_STATE locked={locked}");
+        }
+    }
+}
 
 /// Cmd+Shift on every platform this app targets (macOS only today).
 fn cmd_shift() -> Modifiers {
@@ -141,8 +164,10 @@ can_join_all_spaces={:?} fullscreen_auxiliary={:?}",
         );
         let _ = write!(
             line,
-            " ignores_mouse_events={:?}",
-            overlay_macos::ignores_mouse_events(win)
+            " ignores_mouse_events={:?} key_window={:?} can_become_key={:?}",
+            overlay_macos::ignores_mouse_events(win),
+            overlay_macos::is_key_window(win),
+            overlay_macos::can_become_key_window(win),
         );
     }
 
@@ -179,7 +204,8 @@ sharing_none={:?} (NSWindowSharingNone={})",
     if let Err(e) = win.set_always_on_top(true) {
         eprintln!("OVERLAY_ERROR set_always_on_top: {e}");
     }
-    // Click-through by default so the HUD never steals a click from the call UI.
+    // Started unlocked so the HUD is usable immediately; `Cmd+Shift+E` locks it to
+    // click-through before a call.
     if let Err(e) = win.set_ignore_cursor_events(CLICK_THROUGH.load(Ordering::Relaxed)) {
         eprintln!("OVERLAY_ERROR set_ignore_cursor_events: {e}");
     }
@@ -197,9 +223,18 @@ fullscreen_auxiliary={:?}",
         }
     }
 
+    println!("{INPUT_POLICY}");
     println!("{}", report(win));
     let _ = std::io::stdout().flush();
 }
+
+/// Logged next to the measured window state so the input contract is visible. `acceptFirstMouse`
+/// is set because the HUD is normally not the key window and AppKit documents the first click
+/// on such a window as activation-only unless the view accepts it first. That behaviour could
+/// not be reproduced here (see `overlay_macos::inject_click`), so this is a defensive setting,
+/// not a measured fix; the measured fixes are `start_unlocked` and the whole-card drag region.
+const INPUT_POLICY: &str =
+    "INPUT_POLICY accept_first_mouse=true start_unlocked=true (lock with Cmd+Shift+E)";
 
 #[tauri::command]
 fn hud_report(window: tauri::WebviewWindow) -> String {
@@ -216,6 +251,7 @@ fn set_click_through(
         .set_ignore_cursor_events(enabled)
         .map_err(|e| e.to_string())?;
     CLICK_THROUGH.store(enabled, Ordering::Relaxed);
+    refresh_tray();
     let _ = app.emit("edit_mode", !enabled);
     Ok(report(&window))
 }
@@ -225,6 +261,17 @@ fn hud_state() -> HudState {
     HudState {
         edit_mode: !CLICK_THROUGH.load(Ordering::Relaxed),
     }
+}
+
+/// Proves a real pointer event reached the webview. The `ignoresMouseEvents` flag only says
+/// the window accepts clicks; it says nothing about whether they are delivered, which is a
+/// separate gate (`acceptsFirstMouse`). This is the only end-to-end evidence available
+/// without synthesising input, which needs Accessibility permission we do not have.
+#[tauri::command]
+fn input_probe(kind: String) {
+    let first = !POINTER_SEEN.swap(true, Ordering::Relaxed);
+    println!("INPUT_PROBE kind={kind} first={first}");
+    let _ = std::io::stdout().flush();
 }
 
 fn emit_active(app: &tauri::AppHandle, tracker: &Arc<Mutex<Tracker>>, id: i32, reason: &str) {
@@ -549,6 +596,7 @@ fn toggle_edit_mode(app: &tauri::AppHandle) {
             );
             // Tell the HUD to show its grab handle and unlocked outline.
             let _ = app.emit("edit_mode", !click_through);
+            refresh_tray();
         }
         Err(err) => eprintln!("HOTKEY_ERROR click_through: {err}"),
     }
@@ -607,7 +655,8 @@ pub fn run() {
             nudge,
             audio_level,
             script_lines,
-            hud_state
+            hud_state,
+            input_probe
         ])
         .on_window_event(|window, event| {
             // Dragging and resizing fire continuously; just record the latest placement and
@@ -702,6 +751,27 @@ pub fn run() {
                 });
             }
 
+            // Test hook: prove a synthesised click reaches the webview (logs INPUT_PROBE).
+            // Delay is configurable so the HUD can be pushed out of focus first: the click
+            // only proves anything while the window is *not* key.
+            if std::env::var("STEALTH_CLICK_TEST").is_ok() {
+                let delay = std::env::var("STEALTH_CLICK_TEST_MS")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .unwrap_or(3500);
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(delay));
+                    let inner = handle.clone();
+                    let _ = handle.run_on_main_thread(move || {
+                        if let Some(win) = inner.get_webview_window("hud") {
+                            println!("CLICK_TEST {}", overlay_macos::inject_click(&win));
+                            let _ = std::io::stdout().flush();
+                        }
+                    });
+                });
+            }
+
             // Test hook: move the window once so the persist path can be proven headlessly.
             if std::env::var("STEALTH_TEST_MOVE").is_ok() {
                 if let Some(win) = app.get_webview_window("hud") {
@@ -746,7 +816,7 @@ pub fn run() {
                     MenuItem::with_id(app, "quit", "Quit StealthPrompter", true, None::<&str>)?;
                 let menu = Menu::with_items(app, &[&edit, &show, &nudge_up, &nudge_down, &quit])?;
 
-                TrayIconBuilder::with_id("main")
+                let tray = TrayIconBuilder::with_id("main")
                     .icon(app.default_window_icon().expect("app icon").clone())
                     .tooltip("StealthPrompter")
                     .menu(&menu)
@@ -760,6 +830,10 @@ pub fn run() {
                         other => eprintln!("TRAY_UNKNOWN {other}"),
                     })
                     .build(app)?;
+                if let Ok(mut guard) = TRAY.lock() {
+                    *guard = Some(tray);
+                }
+                refresh_tray();
                 println!("TRAY_READY menu bar item installed");
             }
 

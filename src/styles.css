@@ -219,6 +219,12 @@ body {
   box-shadow:
     0 0 0 1px rgba(80, 220, 255, 0.35),
     0 0 16px rgba(80, 220, 255, 0.25);
+  /* The whole card is a drag handle while unlocked. */
+  cursor: grab;
+}
+
+.hud[data-edit="true"]:active {
+  cursor: grabbing;
 }
 
 .grab {

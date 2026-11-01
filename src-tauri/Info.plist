@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Without this key macOS terminates the process on first microphone access. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>StealthPrompter listens to your microphone to transcribe what you say so the HUD can follow your script. Audio is streamed to Deepgram in real time and is never written to disk.</string>
+</dict>
+</plist>

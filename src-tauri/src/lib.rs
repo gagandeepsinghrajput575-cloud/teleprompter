@@ -31,7 +31,9 @@ struct AppState {
     tracker: Arc<Mutex<Tracker>>,
     /// RMS of the most recent audio block, stored as f32 bits.
     level: Arc<AtomicU32>,
-    stop: Arc<AtomicBool>,
+    /// Stop flag for the *current* session only. Sharing one flag meant a stop followed by
+    /// a quick restart reset it before the old producer observed it.
+    stop: Mutex<Option<Arc<AtomicBool>>>,
     audio_tx: Mutex<Option<mpsc::UnboundedSender<Vec<i16>>>>,
     http: reqwest::Client,
 }
@@ -237,17 +239,16 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
             .unwrap_or_else(|| "missing".to_string())
     );
 
-    state.stop.store(false, Ordering::Relaxed);
+    let stop = Arc::new(AtomicBool::new(false));
+    *state.stop.lock().unwrap() = Some(stop.clone());
+
     let (audio_tx, audio_rx) = mpsc::unbounded_channel();
     // Simulated Call Mode: replay a 16 kHz mono WAV through the real Deepgram socket.
     let stats = match std::env::var("STEALTH_SIMULATE_WAV") {
-        Ok(path) if !path.trim().is_empty() => audio::replay_wav(&path, audio_tx.clone())?,
-        _ => spawn_capture(
-            device,
-            audio_tx.clone(),
-            state.level.clone(),
-            state.stop.clone(),
-        )?,
+        Ok(path) if !path.trim().is_empty() => {
+            audio::replay_wav(&path, audio_tx.clone(), stop.clone())?
+        }
+        _ => spawn_capture(device, audio_tx.clone(), state.level.clone(), stop.clone())?,
     };
     *state.audio_tx.lock().unwrap() = Some(audio_tx);
 
@@ -359,12 +360,24 @@ async fn start_session(
     begin_session(&app, device)
 }
 
-#[tauri::command]
-fn stop_session(app: tauri::AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
-    state.stop.store(true, Ordering::Relaxed);
-    // Dropping the sender ends the audio channel, which closes the Deepgram stream.
+/// Ends a session. Shared by the command and the headless autostop hook so the loop
+/// exercises the same path a user's click does.
+fn end_session(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    // Take this session's flag and raise it. Because the flag belongs to the session, a
+    // following session cannot clear it before this producer has seen it.
+    if let Some(stop) = state.stop.lock().unwrap().take() {
+        stop.store(true, Ordering::Relaxed);
+    }
+    // Dropping the last remaining sender closes the audio channel, which makes the STT
+    // task send CloseStream and return.
     state.audio_tx.lock().unwrap().take();
-    emit_status(&app, false, "stopped");
+    emit_status(app, false, "stopped");
+}
+
+#[tauri::command]
+fn stop_session(app: tauri::AppHandle) -> Result<(), String> {
+    end_session(&app);
     Ok(())
 }
 
@@ -499,7 +512,7 @@ pub fn run() {
             app.manage(AppState {
                 tracker: Arc::new(Mutex::new(tracker)),
                 level: Arc::new(AtomicU32::new(0)),
-                stop: Arc::new(AtomicBool::new(false)),
+                stop: Mutex::new(None),
                 audio_tx: Mutex::new(None),
                 http: reqwest::Client::builder()
                     .timeout(Duration::from_secs(5))
@@ -524,6 +537,18 @@ pub fn run() {
                         Ok(info) => println!("AUTOSTART_OK device={}", info.device.device),
                         Err(err) => eprintln!("AUTOSTART_FAILED {err}"),
                     }
+                });
+            }
+            // Headless teardown hook, so "does Stop actually stop?" is testable.
+            if let Some(ms) = std::env::var("STEALTH_AUTOSTOP_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(ms));
+                    println!("AUTOSTOP_FIRED after_ms={ms}");
+                    end_session(&handle);
                 });
             }
             Ok(())

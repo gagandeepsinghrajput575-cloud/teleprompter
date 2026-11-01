@@ -9,7 +9,7 @@
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::SizedSample;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
@@ -226,7 +226,11 @@ pub fn start(
 /// This is the Simulated Call Mode: it exercises the real Deepgram socket and the real
 /// tracker without needing a microphone, which makes the pipeline testable and
 /// reproducible even when no human is available to speak.
-pub fn replay_wav(path: &str, tx: UnboundedSender<Vec<i16>>) -> Result<CaptureStats, String> {
+pub fn replay_wav(
+    path: &str,
+    tx: UnboundedSender<Vec<i16>>,
+    stop: Arc<AtomicBool>,
+) -> Result<CaptureStats, String> {
     let reader = hound::WavReader::open(path).map_err(|e| format!("cannot open {path}: {e}"))?;
     let spec = reader.spec();
     if spec.channels != 1 || spec.sample_rate != TARGET_RATE {
@@ -260,6 +264,12 @@ pub fn replay_wav(path: &str, tx: UnboundedSender<Vec<i16>>) -> Result<CaptureSt
         .spawn(move || {
             println!("REPLAY_STARTED {path} samples={}", samples.len());
             for piece in samples.chunks(chunk) {
+                // Stop has to *close* the stream, not merely mute it: returning drops the
+                // sender, which closes the channel and makes the STT task send CloseStream.
+                if stop.load(Ordering::Relaxed) {
+                    println!("REPLAY_STOPPED {path}");
+                    return;
+                }
                 if tx.send(piece.to_vec()).is_err() {
                     break;
                 }
@@ -274,7 +284,10 @@ pub fn replay_wav(path: &str, tx: UnboundedSender<Vec<i16>>) -> Result<CaptureSt
 
 #[cfg(test)]
 mod tests {
-    use super::Resampler;
+    use super::{Resampler, TARGET_RATE};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
 
     #[test]
     fn downsamples_48k_to_16k_at_one_third_the_length() {
@@ -307,5 +320,58 @@ mod tests {
         let mut out = Vec::new();
         r.push(&[5.0, 5.0, 5.0, 5.0], &mut out);
         assert!(out.iter().all(|s| *s == i16::MAX));
+    }
+
+    /// Regression: the replay thread used to ignore the stop flag, so the sender was
+    /// never dropped, the audio channel never closed, and the Deepgram socket stayed open
+    /// (and billable) long after the user pressed Stop.
+    #[test]
+    fn replay_releases_the_channel_when_stopped() {
+        let path = std::env::temp_dir().join("tp_replay_stop_test.wav");
+        let path_str = path.to_str().expect("temp path").to_string();
+        {
+            let spec = hound::WavSpec {
+                channels: 1,
+                sample_rate: TARGET_RATE,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            };
+            let mut writer = hound::WavWriter::create(&path, spec).expect("create wav");
+            // 10 s of audio, so the clip cannot finish naturally inside the test timeout:
+            // only the stop flag can close the channel. A shorter fixture makes this test
+            // pass for the wrong reason.
+            for _ in 0..(TARGET_RATE * 10) {
+                writer.write_sample(0i16).expect("write sample");
+            }
+            writer.finalize().expect("finalize wav");
+        }
+
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(async {
+            let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+            let stop = Arc::new(AtomicBool::new(false));
+            super::replay_wav(&path_str, tx, stop.clone()).expect("replay starts");
+
+            // First chunk arrives, so the producer is definitely running.
+            let first = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await;
+            assert!(
+                first.is_ok() && first.unwrap().is_some(),
+                "no audio produced"
+            );
+
+            stop.store(true, Ordering::Relaxed);
+
+            // The producer must exit and drop its sender, which closes the channel.
+            let closed = tokio::time::timeout(Duration::from_secs(2), async {
+                while rx.recv().await.is_some() {}
+            })
+            .await;
+            assert!(
+                closed.is_ok(),
+                "replay thread kept the channel open after stop: the STT socket would leak"
+            );
+        });
+
+        let _ = std::fs::remove_file(&path);
     }
 }

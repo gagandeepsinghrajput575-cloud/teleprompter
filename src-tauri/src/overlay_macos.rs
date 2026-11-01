@@ -222,6 +222,89 @@ pub fn occlusion_state(win: &tauri::WebviewWindow) -> Option<usize> {
     Some(ns.occlusionState().0)
 }
 
+/// `NSWindow.isOnActiveSpace` — true while the window is on the Space the user is looking at.
+/// This is the readback that says whether the HUD actually followed the user into a fullscreen
+/// Space, rather than merely being allowed to.
+pub fn is_on_active_space(win: &tauri::WebviewWindow) -> Option<bool> {
+    let ptr = ns_window(win)?;
+    // SAFETY: `ns_window()` returned a non-null NSWindow owned by Tauri for this window.
+    let ns = unsafe { &*ptr };
+    Some(ns.isOnActiveSpace())
+}
+
+/// Every collection behaviour the HUD depends on.
+///
+/// `FullScreenAuxiliary` is the flag that lets the window appear on another application's
+/// fullscreen Space at all — without it the HUD is simply not there while Chrome is fullscreen,
+/// no matter how high its level. `CanJoinAllSpaces` keeps it present across ordinary desktops,
+/// and `Stationary` stops it sliding around during Space switches.
+/// Every collection behaviour the HUD depends on.
+///
+/// `FullScreenAuxiliary` lets the window appear alongside a fullscreen window, `CanJoinAllSpaces`
+/// keeps it present across ordinary desktops, and `Stationary` stops it sliding around during
+/// Space switches.
+///
+/// Measured limit: none of this puts the HUD on *another application's* native fullscreen Space.
+/// Chrome fullscreen reports `isOnActiveSpace = false` for the HUD with every combination tried —
+/// level 5 / 25 / 101 / 1000, `FullScreenAuxiliary` alone or with `CanJoinAllSpaces` and
+/// `Stationary`, and with the app as a regular or an accessory agent. `FullScreenAuxiliary` is
+/// documented for auxiliary windows of the *same* application, and a native fullscreen Space is
+/// exclusive to the app that owns it. A maximised Chrome is fine: there the HUD is on the active
+/// Space and reports itself visible.
+fn required_behavior() -> NSWindowCollectionBehavior {
+    NSWindowCollectionBehavior::FullScreenAuxiliary
+        | NSWindowCollectionBehavior::CanJoinAllSpaces
+        | NSWindowCollectionBehavior::Stationary
+}
+
+/// Window level to hold: the status-bar band. Above ordinary app windows, below alerts.
+///
+/// Level 1000 (`NSScreenSaverWindowLevel`) was measured too and made no difference to the
+/// fullscreen case below, so the polite band is kept.
+fn target_level() -> isize {
+    NSStatusWindowLevel
+}
+
+/// Re-applies every property whose drift makes the HUD vanish, and reports only what changed.
+///
+/// Both the level and the collection behaviour are reverted during startup, and a single
+/// `setLevel` measurably does not survive: the level was back to 5 within 500 ms. Returns `None`
+/// when everything was already correct, so a healthy window stays silent.
+pub fn enforce_presence(win: &tauri::WebviewWindow) -> Option<String> {
+    let ptr = ns_window(win)?;
+    // SAFETY: `ns_window()` returned a non-null NSWindow owned by Tauri for this window.
+    let ns = unsafe { &*ptr };
+    let mut changes: Vec<String> = Vec::new();
+
+    if ns.level() != target_level() {
+        let before = ns.level();
+        ns.setLevel(target_level());
+        changes.push(format!("level {before}->{}", ns.level()));
+    }
+
+    if ns.hidesOnDeactivate() {
+        ns.setHidesOnDeactivate(false);
+        changes.push("hides_on_deactivate true->false".to_string());
+    }
+
+    let wanted = required_behavior();
+    let behavior = ns.collectionBehavior();
+    if !behavior.contains(wanted) {
+        let before = behavior.0;
+        ns.setCollectionBehavior(behavior | wanted);
+        changes.push(format!(
+            "collection_behavior 0x{before:x}->0x{:x}",
+            ns.collectionBehavior().0
+        ));
+    }
+
+    if changes.is_empty() {
+        None
+    } else {
+        Some(changes.join(" "))
+    }
+}
+
 /// Raises the HUD into the status-bar band and stops AppKit from hiding it when another app
 /// takes focus.
 ///
@@ -235,7 +318,7 @@ pub fn raise_above_apps(win: &tauri::WebviewWindow) -> Option<(isize, isize, boo
     // SAFETY: `ns_window()` returned a non-null NSWindow owned by Tauri for this window.
     let ns = unsafe { &*ptr };
     let before = ns.level();
-    ns.setLevel(NSStatusWindowLevel);
+    ns.setLevel(target_level());
     ns.setHidesOnDeactivate(false);
     Some((before, ns.level(), ns.hidesOnDeactivate()))
 }
@@ -246,9 +329,7 @@ pub fn add_fullscreen_auxiliary(win: &tauri::WebviewWindow) -> Option<usize> {
     let ptr = ns_window(win)?;
     // SAFETY: `ns_window()` returned a non-null NSWindow owned by Tauri for this window.
     let ns = unsafe { &*ptr };
-    let mut behavior = ns.collectionBehavior();
-    behavior |= NSWindowCollectionBehavior::FullScreenAuxiliary;
-    behavior |= NSWindowCollectionBehavior::CanJoinAllSpaces;
+    let behavior = ns.collectionBehavior() | required_behavior();
     ns.setCollectionBehavior(behavior);
     Some(behavior.0)
 }

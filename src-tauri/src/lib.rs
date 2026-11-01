@@ -28,18 +28,32 @@ static POINTER_SEEN: AtomicBool = AtomicBool::new(false);
 /// is no on-screen affordance left to tell you it is locked.
 static TRAY: Mutex<Option<tauri::tray::TrayIcon>> = Mutex::new(None);
 
+/// True while the HUD is not on the Space the user is looking at — i.e. they are in another
+/// app's native fullscreen Space, where macOS will not show us.
+static OFF_ACTIVE_SPACE: AtomicBool = AtomicBool::new(false);
+
 /// Mirrors the current input mode into the menu bar title and tooltip.
 fn refresh_tray() {
     let locked = CLICK_THROUGH.load(Ordering::Relaxed);
+    let off_space = OFF_ACTIVE_SPACE.load(Ordering::Relaxed);
     if let Ok(guard) = TRAY.lock() {
         if let Some(tray) = guard.as_ref() {
-            let _ = tray.set_title(Some(if locked { "🔒" } else { "🔓" }));
-            let _ = tray.set_tooltip(Some(if locked {
+            let _ = tray.set_title(Some(match (locked, off_space) {
+                (true, false) => "🔒",
+                (false, false) => "🔓",
+                // macOS does not allow the HUD into another app's fullscreen Space, so say so
+                // rather than leaving the window silently missing.
+                (true, true) => "🔒⚠️",
+                (false, true) => "🔓⚠️",
+            }));
+            let _ = tray.set_tooltip(Some(if off_space {
+                "StealthPrompter - hidden: another app is fullscreen (use a maximised window)"
+            } else if locked {
                 "StealthPrompter - locked, clicks pass through"
             } else {
                 "StealthPrompter - unlocked, clickable"
             }));
-            println!("TRAY_STATE locked={locked}");
+            println!("TRAY_STATE locked={locked} off_active_space={off_space}");
         }
     }
 }
@@ -649,26 +663,67 @@ fn register_hotkeys(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-/// Keeps the HUD in the status-bar band.
+/// Keeps the HUD present: level, `hidesOnDeactivate`, and the collection behaviour that lets
+/// the window join another app's fullscreen Space.
 ///
-/// The level cannot be set once and forgotten: something in the startup path (before the
-/// window settles, and again whenever the window is re-shown) puts it back to floating level 5,
-/// which is why the HUD could vanish behind Chrome. Mutating `NSWindow` off the main thread
-/// deadlocks — attempted once, and the calling thread hung — so every re-assert is dispatched.
-fn enforce_overlay_level(handle: &tauri::AppHandle) {
+/// None of this survives being set once. The level was measurably back to 5 within 500 ms of
+/// startup, and the collection behaviour is reverted along the same path — which is what would
+/// leave the HUD missing while Chrome is fullscreen. Mutating `NSWindow` off the main thread
+/// deadlocks (it hung a thread when tried), so every correction is dispatched.
+fn enforce_overlay_presence(handle: &tauri::AppHandle) {
     let inner = handle.clone();
     let _ = handle.run_on_main_thread(move || {
         if let Some(win) = inner.get_webview_window("hud") {
-            if let Some((before, after, _)) = overlay_macos::raise_above_apps(&win) {
-                if before != after {
-                    // Only logged when it actually had to correct something, so a stable
-                    // window stays quiet.
-                    println!("OVERLAY_LEVEL_ENFORCED before={before} after={after}");
-                    let _ = std::io::stdout().flush();
-                }
+            if let Some(changes) = overlay_macos::enforce_presence(&win) {
+                // Only logged when something actually had to be corrected.
+                println!("OVERLAY_PRESENCE_ENFORCED {changes}");
+                let _ = std::io::stdout().flush();
+            }
+            // Surface the one case we cannot fix: another app's native fullscreen Space.
+            let off_space = overlay_macos::is_on_active_space(&win) == Some(false);
+            if off_space != OFF_ACTIVE_SPACE.swap(off_space, Ordering::Relaxed) {
+                refresh_tray();
             }
         }
     });
+}
+
+/// Chrome's front-window bounds and the desktop bounds, so a measurement can be labelled as
+/// fullscreen or not rather than assumed. In native fullscreen Chrome's window matches the
+/// screen exactly.
+#[cfg(target_os = "macos")]
+fn chrome_bounds() -> String {
+    let script = r#"
+tell application "System Events"
+  tell process "Google Chrome"
+    set w to front window
+    return (position of w as text) & " " & (size of w as text)
+  end tell
+end tell"#;
+    let out = std::process::Command::new("osascript")
+        .args(["-e", script])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        Ok(o) => format!("err:{}", String::from_utf8_lossy(&o.stderr).trim()),
+        Err(err) => format!("spawn error: {err}"),
+    }
+}
+
+/// Desktop bounds, for comparison with `chrome_bounds`.
+#[cfg(target_os = "macos")]
+fn screen_bounds() -> String {
+    let out = std::process::Command::new("osascript")
+        .args([
+            "-e",
+            "tell application \"Finder\" to get bounds of window of desktop",
+        ])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        Ok(o) => format!("err:{}", String::from_utf8_lossy(&o.stderr).trim()),
+        Err(err) => format!("spawn error: {err}"),
+    }
 }
 
 /// One line describing whether the HUD is still on screen. Reads must happen on the main
@@ -680,10 +735,12 @@ fn focus_snapshot(handle: &tauri::AppHandle) -> String {
     let dispatched = handle.run_on_main_thread(move || {
         let line = match inner.get_webview_window("hud") {
             Some(win) => format!(
-                "level={:?} visible={:?} occlusion={:?} hides_on_deactivate={:?} key={:?}",
+                "level={:?} visible={:?} occlusion={:?} on_active_space={:?} \
+hides_on_deactivate={:?} key={:?}",
                 overlay_macos::window_level(&win),
                 win.is_visible().ok(),
                 overlay_macos::occlusion_state(&win).map(|bits| (bits, bits & 2 != 0)),
+                overlay_macos::is_on_active_space(&win),
                 overlay_macos::hides_on_deactivate(&win),
                 overlay_macos::is_key_window(&win),
             ),
@@ -885,7 +942,7 @@ pub fn run() {
                         std::thread::sleep(Duration::from_millis(500));
                         if let Some(win) = handle.get_webview_window("hud") {
                             if tick == 2 {
-                                enforce_overlay_level(&handle);
+                                enforce_overlay_presence(&handle);
                                 println!("LEVEL_REASSERT dispatched");
                             }
                             println!(
@@ -900,7 +957,45 @@ pub fn run() {
                         .args(["-e", "tell application \"Google Chrome\" to activate"])
                         .status();
                     std::thread::sleep(Duration::from_millis(3000));
-                    println!("FOCUS_TEST after_chrome {}", focus_snapshot(&handle));
+                    println!(
+                        "FOCUS_TEST after_chrome chrome=[{}] {}",
+                        chrome_bounds(),
+                        focus_snapshot(&handle)
+                    );
+
+                    // Fullscreen is a different Space, not just a bigger window, so it needs
+                    // its own measurement. Driving Chrome into it needs a synthesised
+                    // keystroke, which fails without Accessibility permission — the status is
+                    // reported rather than assumed.
+                    if std::env::var("STEALTH_FULLSCREEN_TEST").is_ok() {
+                        let toggle = || {
+                            let _ = std::process::Command::new("osascript")
+                                .args([
+                                    "-e",
+                                    "tell application \"System Events\" to keystroke \"f\" using {control down, command down}",
+                                ])
+                                .status();
+                        };
+                        // Two toggles, so one of the two measurements is always taken while
+                        // Chrome is fullscreen, whatever state it started in. Success means the
+                        // HUD is on the active Space in BOTH states.
+                        toggle();
+                        std::thread::sleep(Duration::from_millis(3000));
+                        println!(
+                            "FULLSCREEN_A chrome=[{}] screen=[{}] {}",
+                            chrome_bounds(),
+                            screen_bounds(),
+                            focus_snapshot(&handle)
+                        );
+                        toggle();
+                        std::thread::sleep(Duration::from_millis(3000));
+                        println!(
+                            "FULLSCREEN_B chrome=[{}] screen=[{}] {}",
+                            chrome_bounds(),
+                            screen_bounds(),
+                            focus_snapshot(&handle)
+                        );
+                    }
                     let _ = std::io::stdout().flush();
                 });
             }
@@ -924,6 +1019,9 @@ pub fn run() {
                 }
             });
 
+            // Note: an accessory (agent) activation policy was measured against a genuinely
+            // fullscreen Chrome and did NOT put the HUD on that Space either, so the app stays
+            // a regular app.
             if let Some(win) = app.get_webview_window("hud") {
                 apply_overlay_policy(&win);
             }
@@ -934,7 +1032,7 @@ pub fn run() {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || loop {
                     std::thread::sleep(Duration::from_millis(1500));
-                    enforce_overlay_level(&handle);
+                    enforce_overlay_presence(&handle);
                 });
             }
 

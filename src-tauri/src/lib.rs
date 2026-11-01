@@ -331,6 +331,7 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
 
     tauri::async_runtime::spawn(async move {
         let mut llm_failures: u32 = 0;
+        let mut last_llm: Option<std::time::Instant> = None;
         while let Some(event) = stt_rx.recv().await {
             let transcript = match event {
                 stt::SttEvent::Connected => {
@@ -345,15 +346,18 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
             };
 
             let _ = app_handle.emit("transcript", &transcript);
-            if !transcript.is_final {
-                continue;
-            }
-            println!("STT_FINAL \"{}\"", transcript.text);
 
-            // Stage 0: only classify once enough new words have arrived.
+            // Stage 0: interims count too. Waiting for Deepgram to finalize the sentence is
+            // exactly what made the highlight arrive when the line was mostly already spoken.
             let plan = {
                 let mut tr = tracker_arc.lock().unwrap();
-                tr.push_text(&transcript.text);
+                if transcript.is_final {
+                    println!("STT_FINAL \"{}\"", transcript.text);
+                    tr.push_text(&transcript.text);
+                    tr.clear_partial();
+                } else {
+                    tr.set_partial(&transcript.text);
+                }
                 if tr.should_run_cycle() {
                     tr.mark_cycle_ran();
                     Some((
@@ -379,8 +383,13 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
                 // off-script speech, which is exactly what the model is meant to prevent.
                 let mut proposal: Option<i32> = None;
                 let mut decided_by_llm = false;
+                // Interims make cycles frequent; without this throttle an ambiguous buffer
+                // would fire a model request every few hundred milliseconds.
+                let llm_ready =
+                    last_llm.map_or(true, |at| at.elapsed() >= Duration::from_millis(700));
                 if let Some(key) = llm_key.as_ref() {
-                    if llm_failures < 3 {
+                    if llm_failures < 3 && llm_ready {
+                        last_llm = Some(std::time::Instant::now());
                         println!(
                             "TRACKER_ROUTE stage2-llm active={active} buffer_words={}",
                             buffer.split_whitespace().count()
@@ -400,7 +409,7 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
                             }
                         }
                     } else {
-                        println!("TRACKER_ROUTE stage1-local (llm circuit open)");
+                        println!("TRACKER_ROUTE stage1-local (llm throttled or circuit open)");
                     }
                 } else {
                     println!("TRACKER_ROUTE stage1-local (no deepseek key)");

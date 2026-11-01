@@ -15,10 +15,13 @@ use std::time::Instant;
 /// Embedded so the shipped app never depends on the repo layout at runtime.
 const SCRIPT_JSON: &str = include_str!("../../src/fixtures/remodeler_script.json");
 
-/// How many trailing words the classifier sees.
+/// How many trailing words of finalized speech the classifier sees.
 const BUFFER_WORDS: usize = 18;
-/// New words required before a classification cycle runs.
-pub const WORDS_PER_CYCLE: usize = 6;
+/// New finalized words required before a classification cycle runs. Kept low because the
+/// moment a sentence is ~70% spoken is far too late to move the highlight.
+pub const WORDS_PER_CYCLE: usize = 2;
+/// Interim words required before an in-progress sentence can trigger a cycle.
+const PARTIAL_WORDS_TRIGGER: usize = 2;
 /// Stage 1 confidence margin: best block must beat the runner-up by this ratio.
 const LOCAL_MARGIN: f64 = 1.25;
 /// Minimum number of distinct shared words before stage 1 may trust itself.
@@ -26,6 +29,10 @@ const MIN_HITS: usize = 2;
 /// When no other block scores at all, the ratio test is vacuously satisfied, so require a
 /// higher absolute floor. Without this a single incidental word ("driving") counts as proof.
 const MIN_DOMINANT_SCORE: f64 = 1.6;
+/// Fraction of a line's own content words that must actually have been spoken. Two chance
+/// words ("driving", "back") can satisfy the hit count and the score floor while covering
+/// only a fifth of the line; a real delivery covers much more.
+const MIN_COVERAGE: f64 = 0.25;
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct ScriptLine {
@@ -157,6 +164,10 @@ pub struct Tracker {
     pending_id: Option<i32>,
     pending_count: u8,
     last_change: Instant,
+    /// Latest interim transcript for the sentence being spoken right now.
+    partial: String,
+    /// Partial word count at the last cycle, so the same interim cannot re-trigger.
+    partial_marked: usize,
     /// Set false after repeated LLM failures so the HUD degrades instead of stalling.
     pub llm_enabled: bool,
 }
@@ -181,6 +192,8 @@ impl Tracker {
             pending_id: None,
             pending_count: 0,
             last_change: Instant::now(),
+            partial: String::new(),
+            partial_marked: 0,
             llm_enabled: true,
         })
     }
@@ -194,7 +207,12 @@ impl Tracker {
     }
 
     pub fn spoken_buffer(&self) -> String {
-        self.window.iter().cloned().collect::<Vec<_>>().join(" ")
+        let mut parts: Vec<String> = self.window.iter().cloned().collect();
+        let partial = self.partial.trim();
+        if !partial.is_empty() {
+            parts.push(partial.to_string());
+        }
+        parts.join(" ")
     }
 
     /// Adds spoken words to the rolling window; returns how many were new.
@@ -211,12 +229,32 @@ impl Tracker {
         added
     }
 
-    /// Stage 0: is there enough new speech to justify a cycle?
+    /// Records the interim transcript of the sentence in progress. Interims are rewritten by
+    /// the recogniser, so this replaces rather than appends.
+    pub fn set_partial(&mut self, text: &str) {
+        self.partial = text.trim().to_string();
+    }
+
+    /// A finalized segment supersedes the interim that predicted it, so the tail is dropped
+    /// rather than duplicated into the buffer.
+    pub fn clear_partial(&mut self) {
+        self.partial.clear();
+        self.partial_marked = 0;
+    }
+
+    /// Stage 0: is there enough new speech to justify a cycle? Interims count, which is what
+    /// makes the highlight move while a sentence is still being spoken rather than after it
+    /// is finished.
     pub fn should_run_cycle(&self) -> bool {
-        self.words_since_cycle >= WORDS_PER_CYCLE
+        if self.words_since_cycle >= WORDS_PER_CYCLE {
+            return true;
+        }
+        let partial_words = self.partial.split_whitespace().count();
+        partial_words >= PARTIAL_WORDS_TRIGGER && partial_words != self.partial_marked
     }
 
     pub fn mark_cycle_ran(&mut self) {
+        self.partial_marked = self.partial.split_whitespace().count();
         self.words_since_cycle = 0;
     }
 
@@ -234,7 +272,7 @@ impl Tracker {
             .map(|line| tokens(&format!("{} {}", line.label, line.body)))
             .collect();
 
-        let mut scored: Vec<(i32, f64, usize)> = self
+        let mut scored: Vec<(i32, f64, usize, usize)> = self
             .lines
             .iter()
             .zip(line_tokens.iter())
@@ -250,16 +288,16 @@ impl Tracker {
                     // Distinctive words count more than words every line shares.
                     score += (line_tokens.len() as f64 / df.max(1.0)).ln().max(0.05);
                 }
-                (line.id, score, hits)
+                (line.id, score, hits, words.len())
             })
             .collect();
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        let (best_id, best, best_hits) = scored[0];
+        let (best_id, best, best_hits, best_tokens) = scored[0];
         if best <= 0.0 {
             return None;
         }
-        let second = scored.get(1).map(|(_, score, _)| *score).unwrap_or(0.0);
+        let second = scored.get(1).map(|(_, score, _, _)| *score).unwrap_or(0.0);
 
         // A lone shared word must not count as evidence. When every other block scores zero
         // the ratio test passes trivially, which is how off-script speech ("driving down from
@@ -269,7 +307,12 @@ impl Tracker {
         } else {
             best >= second * LOCAL_MARGIN
         };
-        let confident = best_hits >= MIN_HITS && margin_ok;
+        let coverage = if best_tokens == 0 {
+            0.0
+        } else {
+            best_hits as f64 / best_tokens as f64
+        };
+        let confident = best_hits >= MIN_HITS && margin_ok && coverage >= MIN_COVERAGE;
         Some((best_id, confident, best))
     }
 
@@ -305,6 +348,8 @@ impl Tracker {
             self.pending_id = None;
             self.pending_count = 0;
             self.window.clear();
+            self.partial.clear();
+            self.partial_marked = 0;
             self.words_since_cycle = 0;
             self.last_change = Instant::now();
             Some(proposed)
@@ -322,6 +367,8 @@ impl Tracker {
         self.pending_id = None;
         self.pending_count = 0;
         self.window.clear();
+        self.partial.clear();
+        self.partial_marked = 0;
         self.words_since_cycle = 0;
         self.last_change = Instant::now();
         self.active
@@ -594,5 +641,60 @@ mod tests {
         let ids: Vec<i32> = t.candidate_window().iter().map(|l| l.id).collect();
         // Three lines back, four forward, clamped at the start of the script.
         assert_eq!(ids, vec![2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    #[test]
+    fn two_incidental_words_are_not_enough_coverage() {
+        let mut t = tracker();
+        // "driving" and "back" both appear in line 12, so they pass the hit count and the
+        // score floor, but together they cover about a fifth of that line. That is a
+        // coincidence, not the salesperson reading it.
+        t.push_text("my cousin is driving down from Ohio and back");
+        let (id, confident, _) = t.local_match().expect("some overlap");
+        assert_eq!(id, 12);
+        assert!(
+            !confident,
+            "low coverage must not be treated as a confident match"
+        );
+    }
+
+    #[test]
+    fn an_interim_can_trigger_a_cycle_before_the_sentence_is_final() {
+        let mut t = tracker();
+        assert!(!t.should_run_cycle());
+        t.set_partial("what happens");
+        assert!(
+            t.should_run_cycle(),
+            "an interim must be able to trigger a cycle"
+        );
+        t.mark_cycle_ran();
+        assert!(
+            !t.should_run_cycle(),
+            "an unchanged interim must not re-trigger"
+        );
+        t.set_partial("what happens when a lead");
+        assert!(t.should_run_cycle(), "a longer interim must trigger again");
+    }
+
+    #[test]
+    fn the_buffer_includes_the_interim_tail() {
+        let mut t = tracker();
+        t.push_text("what happens when");
+        t.set_partial("a lead calls");
+        assert!(t.spoken_buffer().ends_with("a lead calls"));
+    }
+
+    #[test]
+    fn a_final_does_not_duplicate_the_interim_tail() {
+        let mut t = tracker();
+        t.set_partial("what happens when a lead");
+        t.push_text("what happens when a lead");
+        t.clear_partial();
+        let buffer = t.spoken_buffer();
+        assert_eq!(
+            buffer.split_whitespace().filter(|w| *w == "lead").count(),
+            1,
+            "the interim tail must be superseded, not appended: {buffer}"
+        );
     }
 }

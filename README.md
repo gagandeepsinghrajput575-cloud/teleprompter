@@ -50,9 +50,23 @@ npx tauri build --bundles app
 > export PATH="$HOME/.cargo/bin:$PATH"
 > ```
 
-The build is **ad-hoc signed** (`signingIdentity: "-"`). There is no Apple Developer ID and no
-notarization, because this app targets the developer's own machine. See
-`docs/architecture.md` for the consequences (microphone permission behaviour across rebuilds).
+The build is **locally signed** with a self-signed certificate (`StealthPrompter Local Signing`),
+not ad-hoc. There is no Apple Developer ID and no notarization, because this app targets the
+developer's own machine — see `docs/architecture.md` for why the certificate matters for
+microphone permissions.
+
+Before building, unlock the signing keychain (it auto-locks after 6 hours of inactivity):
+
+```bash
+security unlock-keychain -p tpsign ~/Library/Keychains/stealthprompter-signing.keychain-db
+```
+
+Installing:
+
+```bash
+rm -rf /Applications/StealthPrompter.app
+cp -R src-tauri/target/release/bundle/macos/StealthPrompter.app /Applications/
+```
 
 ## Design notes
 

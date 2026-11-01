@@ -73,7 +73,19 @@ tracking accuracy; TTS fixtures are an optimistic ceiling. See
 
 ## Distribution
 
-Ad-hoc signed local build, no Apple Developer ID, no notarization (`signingIdentity: "-"`).
-Consequence: the macOS TCC microphone grant is keyed to a cdhash that changes on every rebuild,
-so permission may be re-prompted. A self-signed Code Signing certificate fixes this and is the
-planned mitigation. See `.zenith/missions/stealthprompter-v1/decisions/003-distribution.md`.
+Locally signed with a **self-signed certificate** (`StealthPrompter Local Signing`), no Apple
+Developer ID, no notarization (`decisions/003-distribution.md`).
+
+Why not ad-hoc: macOS keys the microphone grant to the bundle ID plus a *designated
+requirement*. Under ad-hoc signing that requirement is cdhash-derived, and the cdhash changes on
+every build — so macOS treated each rebuild as a new app and re-prompted. Anchoring it to a
+certificate leaf makes it content-independent:
+
+```
+designated => identifier "com.gaganrajput11.stealthprompter"
+              and certificate leaf = H"bba3b7faf676c681c31853ab985ab3dc6a15c998"
+```
+
+The signing identity lives in its own keychain (`stealthprompter-signing.keychain-db`) rather
+than the login keychain, purely so signing is non-interactive: the login keychain would demand a
+GUI password prompt on every `codesign` call. Unlock it before building.

@@ -51,6 +51,15 @@ pub fn has_can_join_all_spaces(win: &tauri::WebviewWindow) -> Option<bool> {
     collection_behavior(win).map(|b| b & BEHAVIOR_CAN_JOIN_ALL_SPACES != 0)
 }
 
+/// `NSWindow.ignoresMouseEvents` — the OS-level truth about click-through, rather than
+/// trusting that our setter call took effect.
+pub fn ignores_mouse_events(win: &tauri::WebviewWindow) -> Option<bool> {
+    let ptr = ns_window(win)?;
+    // SAFETY: `ns_window()` returned a non-null NSWindow owned by Tauri for this window.
+    let ns = unsafe { &*ptr };
+    Some(ns.ignoresMouseEvents())
+}
+
 /// Adds `FullScreenAuxiliary` and `CanJoinAllSpaces`. Without these, macOS keeps the
 /// window on the desktop Space and a fullscreen Chrome/Meet window hides it.
 pub fn add_fullscreen_auxiliary(win: &tauri::WebviewWindow) -> Option<usize> {

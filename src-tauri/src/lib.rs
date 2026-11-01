@@ -139,6 +139,11 @@ can_join_all_spaces={:?} fullscreen_auxiliary={:?}",
             overlay_macos::has_can_join_all_spaces(win),
             overlay_macos::has_fullscreen_auxiliary(win),
         );
+        let _ = write!(
+            line,
+            " ignores_mouse_events={:?}",
+            overlay_macos::ignores_mouse_events(win)
+        );
     }
 
     line
@@ -662,6 +667,32 @@ pub fn run() {
                 });
             }
 
+            // Test hook: prove that toggling edit mode actually flips the OS-level
+            // click-through flag, independent of whether a global hotkey fires.
+            if let Some(ms) = std::env::var("STEALTH_EDIT_TOGGLE_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(ms));
+                    if let Some(win) = handle.get_webview_window("hud") {
+                        println!(
+                            "EDIT_TOGGLE_TEST before={:?}",
+                            overlay_macos::ignores_mouse_events(&win)
+                        );
+                    }
+                    toggle_edit_mode(&handle);
+                    std::thread::sleep(Duration::from_millis(600));
+                    if let Some(win) = handle.get_webview_window("hud") {
+                        println!(
+                            "EDIT_TOGGLE_TEST after={:?}",
+                            overlay_macos::ignores_mouse_events(&win)
+                        );
+                    }
+                });
+            }
+
             // Test hook: move the window once so the persist path can be proven headlessly.
             if std::env::var("STEALTH_TEST_MOVE").is_ok() {
                 if let Some(win) = app.get_webview_window("hud") {
@@ -683,6 +714,44 @@ pub fn run() {
 
             if let Some(win) = app.get_webview_window("hud") {
                 apply_overlay_policy(&win);
+            }
+
+            // A click-through HUD must never depend on a single global hotkey to be unlocked:
+            // if the shortcut is swallowed, there is no way back in. The menu bar item is
+            // always clickable regardless of the window's click-through state.
+            {
+                use tauri::menu::{Menu, MenuItem};
+                use tauri::tray::TrayIconBuilder;
+
+                let edit = MenuItem::with_id(
+                    app,
+                    "edit",
+                    "Unlock / Lock HUD (edit mode)",
+                    true,
+                    None::<&str>,
+                )?;
+                let show = MenuItem::with_id(app, "show", "Show / Hide HUD", true, None::<&str>)?;
+                let nudge_up = MenuItem::with_id(app, "up", "Previous line", true, None::<&str>)?;
+                let nudge_down = MenuItem::with_id(app, "down", "Next line", true, None::<&str>)?;
+                let quit =
+                    MenuItem::with_id(app, "quit", "Quit StealthPrompter", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&edit, &show, &nudge_up, &nudge_down, &quit])?;
+
+                TrayIconBuilder::with_id("main")
+                    .icon(app.default_window_icon().expect("app icon").clone())
+                    .tooltip("StealthPrompter")
+                    .menu(&menu)
+                    .show_menu_on_left_click(true)
+                    .on_menu_event(|app, event| match event.id.as_ref() {
+                        "edit" => toggle_edit_mode(app),
+                        "show" => toggle_visibility(app),
+                        "up" => nudge_from_hotkey(app, -1),
+                        "down" => nudge_from_hotkey(app, 1),
+                        "quit" => app.exit(0),
+                        other => eprintln!("TRAY_UNKNOWN {other}"),
+                    })
+                    .build(app)?;
+                println!("TRAY_READY menu bar item installed");
             }
 
             if let Err(err) = register_hotkeys(app.handle()) {

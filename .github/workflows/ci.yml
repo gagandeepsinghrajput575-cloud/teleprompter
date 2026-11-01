@@ -18,6 +18,13 @@ jobs:
       - run: npm run typecheck
       - run: npm run test
       - run: npm run build
+      # Fail the build if a real-looking credential ever appears in source again.
+      - name: Secret scan
+        run: |
+          if grep -rInE 'sk_[A-Za-z0-9]{20,}|[A-Fa-f0-9]{40}' src src-tauri/src --include='*.ts' --include='*.tsx' --include='*.rs'; then
+            echo "::error::possible credential committed to source"
+            exit 1
+          fi
 
   rust:
     runs-on: macos-latest

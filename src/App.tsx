@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { cueChips } from "./lib/cues";
@@ -80,10 +80,14 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const index = script.blocks.findIndex((b) => b.id === activeId);
-  const active = script.blocks[index] ?? script.blocks[0];
-  const previous = index > 0 ? script.blocks[index - 1] : undefined;
-  const next = index >= 0 ? script.blocks[index + 1] : undefined;
+  const active = script.blocks.find((b) => b.id === activeId) ?? script.blocks[0];
+  const activeRef = useRef<HTMLDivElement | null>(null);
+
+  // The active block must stay centred, with neighbours visible above and below it.
+  // `scrollIntoView` is what produces the smooth lerp between blocks.
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [activeId]);
 
   return (
     <div className="hud">
@@ -99,22 +103,29 @@ export default function App() {
         <div className="meter-fill" style={{ width: `${Math.min(100, level * 400)}%` }} />
       </div>
 
-      {previous && <div className="peek">{previous.label}</div>}
-
-      <div className="block" data-active="true">
-        <span className="label">{active.label}</span>
-        {active.body}
-        <div className="cues">
-          {cueChips(active.cue).map((chip) => (
-            <span className="cue" key={chip}>
-              {chip}
-            </span>
-          ))}
-          <span className="cue reason">{reason}</span>
-        </div>
+      <div className="blocks">
+        {script.blocks.map((block) => (
+          <div
+            className="block"
+            key={block.id}
+            data-active={block.id === activeId}
+            ref={block.id === activeId ? activeRef : undefined}
+          >
+            <span className="label">{block.label}</span>
+            {block.body}
+            {block.id === activeId && (
+              <div className="cues">
+                {cueChips(block.cue).map((chip) => (
+                  <span className="cue" key={chip}>
+                    {chip}
+                  </span>
+                ))}
+                <span className="cue reason">{reason}</span>
+              </div>
+            )}
+          </div>
+        ))}
       </div>
-
-      {next && <div className="peek">{next.label}</div>}
 
       <div className="footer">
         <span className="spoken">{spoken || "waiting for speech"}</span>

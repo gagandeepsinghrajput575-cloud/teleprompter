@@ -9,26 +9,30 @@ describe("cueChips", () => {
   });
 
   it("flags downward inflection", () => {
-    expect(cueChips({ ...base, tone: "down" })).toEqual(["⬇ DOWN"]);
+    expect(cueChips({ ...base, tone: "down" })).toEqual(["⬇️ DOWN"]);
   });
 
-  it("flags slowed pace", () => {
-    expect(cueChips({ ...base, pace: "slow" })).toEqual(["🐢 SLOW"]);
+  it("flags a curious, upward inflection", () => {
+    expect(cueChips({ ...base, tone: "up" })).toEqual(["🤔 CURIOUS"]);
   });
 
-  it("flags a deliberate hold at or above the threshold", () => {
-    expect(cueChips({ ...base, pauseAfterMs: HOLD_THRESHOLD_MS })).toEqual(["⏸ HOLD"]);
+  it("flags slowed, lowered delivery", () => {
+    expect(cueChips({ ...base, pace: "slow" })).toEqual(["🐢 SLOW & LOW"]);
   });
 
-  it("does not flag a hold below the threshold", () => {
+  it("flags a deliberate pause at or above the threshold", () => {
+    expect(cueChips({ ...base, pauseAfterMs: HOLD_THRESHOLD_MS })).toEqual(["⏸️ 1.2s"]);
+  });
+
+  it("does not flag a pause below the threshold", () => {
     expect(cueChips({ ...base, pauseAfterMs: HOLD_THRESHOLD_MS - 1 })).toEqual([]);
   });
 
   it("keeps a stable order when every cue is present", () => {
     expect(cueChips({ tone: "down", pace: "slow", pauseAfterMs: 2000 })).toEqual([
-      "⬇ DOWN",
-      "🐢 SLOW",
-      "⏸ HOLD",
+      "⬇️ DOWN",
+      "🐢 SLOW & LOW",
+      "⏸️ 2s",
     ]);
   });
 });

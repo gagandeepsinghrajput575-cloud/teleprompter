@@ -83,13 +83,13 @@ mod tests {
 
     #[test]
     fn mask_never_reveals_the_middle() {
-        // Synthetic value with the same shape as a real key. Never use a live credential
-        // in a test: this repo is public.
-        let fake = "sk_0123456789abcdefghijklmnopqrstuvwxyz0123456789abcdefghijwxyz";
+        // Synthetic value. Deliberately not shaped like a real provider key so the CI
+        // secret scan can stay strict without exempting test files.
+        let fake = "demo-secret-0123456789abcdefghij";
         let masked = mask(fake);
-        assert!(masked.starts_with("sk_0"), "got {masked}");
-        assert!(masked.contains("wxyz"), "got {masked}");
-        assert!(!masked.contains("abcdefghij"), "middle leaked: {masked}");
+        assert!(masked.starts_with("demo"), "got {masked}");
+        assert!(masked.contains("ghij"), "got {masked}");
+        assert!(!masked.contains("secret-0123"), "middle leaked: {masked}");
         assert_ne!(masked, fake);
     }
 

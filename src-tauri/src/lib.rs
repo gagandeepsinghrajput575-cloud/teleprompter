@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{Emitter, Manager};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tokio::sync::mpsc;
 
 mod audio;
@@ -15,9 +16,15 @@ mod overlay_macos;
 
 use tracker::Tracker;
 
-/// Click-through is a capability, not a default, until T7 adds a global escape hatch:
-/// a click-through window with no global shortcut cannot be interacted with at all.
-static CLICK_THROUGH: AtomicBool = AtomicBool::new(false);
+/// Click-through is ON by default: the HUD must never eat a click meant for Meet or the
+/// browser. `Cmd+Shift+E` flips it off into edit mode (drag, click Start), because a
+/// click-through window with no escape hatch cannot be interacted with at all.
+static CLICK_THROUGH: AtomicBool = AtomicBool::new(true);
+
+/// Cmd+Shift on every platform this app targets (macOS only today).
+fn cmd_shift() -> Modifiers {
+    Modifiers::SHIFT | Modifiers::SUPER
+}
 
 /// Live session state, owned by Tauri and shared with the async event loop.
 struct AppState {
@@ -113,6 +120,10 @@ sharing_none={:?} (NSWindowSharingNone={})",
     }
     if let Err(e) = win.set_always_on_top(true) {
         eprintln!("OVERLAY_ERROR set_always_on_top: {e}");
+    }
+    // Click-through by default so the HUD never steals a click from the call UI.
+    if let Err(e) = win.set_ignore_cursor_events(CLICK_THROUGH.load(Ordering::Relaxed)) {
+        eprintln!("OVERLAY_ERROR set_ignore_cursor_events: {e}");
     }
 
     #[cfg(target_os = "macos")]
@@ -392,9 +403,78 @@ fn script_blocks(state: tauri::State<'_, AppState>) -> Vec<tracker::ScriptBlock>
     state.tracker.lock().unwrap().blocks().to_vec()
 }
 
+fn toggle_visibility(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("hud") else {
+        return;
+    };
+    let visible = window.is_visible().unwrap_or(false);
+    let outcome = if visible {
+        window.hide()
+    } else {
+        window.show()
+    };
+    match outcome {
+        Ok(()) => println!("HOTKEY visibility={}", !visible),
+        Err(err) => eprintln!("HOTKEY_ERROR visibility: {err}"),
+    }
+}
+
+fn toggle_edit_mode(app: &tauri::AppHandle) {
+    let Some(window) = app.get_webview_window("hud") else {
+        return;
+    };
+    let click_through = !CLICK_THROUGH.load(Ordering::Relaxed);
+    match window.set_ignore_cursor_events(click_through) {
+        Ok(()) => {
+            CLICK_THROUGH.store(click_through, Ordering::Relaxed);
+            println!("HOTKEY click_through={click_through}");
+        }
+        Err(err) => eprintln!("HOTKEY_ERROR click_through: {err}"),
+    }
+}
+
+fn nudge_from_hotkey(app: &tauri::AppHandle, delta: i32) {
+    let state = app.state::<AppState>();
+    let id = state.tracker.lock().unwrap().manual(delta);
+    println!("HOTKEY nudge delta={delta} active={id}");
+    emit_active(app, &state.tracker, id, "manual-hotkey");
+}
+
+/// Registers the global shortcuts. These are process-wide, so they must stay a small,
+/// deliberate set — every one of them steals the combination from every other app.
+fn register_hotkeys(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let shortcuts = [
+        Shortcut::new(Some(cmd_shift()), Code::KeyH),
+        Shortcut::new(Some(cmd_shift()), Code::KeyE),
+        Shortcut::new(Some(cmd_shift()), Code::ArrowUp),
+        Shortcut::new(Some(cmd_shift()), Code::ArrowDown),
+    ];
+    app.global_shortcut()
+        .register_multiple(shortcuts)
+        .map_err(|err| Box::<dyn std::error::Error>::from(err.to_string()))?;
+    println!("HOTKEYS registered cmd+shift+H hide, +E edit mode, +Up/+Down nudge");
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, shortcut, event| {
+                    if event.state() != ShortcutState::Pressed || shortcut.mods != cmd_shift() {
+                        return;
+                    }
+                    match shortcut.key {
+                        Code::KeyH => toggle_visibility(app),
+                        Code::KeyE => toggle_edit_mode(app),
+                        Code::ArrowUp => nudge_from_hotkey(app, -1),
+                        Code::ArrowDown => nudge_from_hotkey(app, 1),
+                        _ => {}
+                    }
+                })
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             hud_report,
             set_click_through,
@@ -429,6 +509,10 @@ pub fn run() {
 
             if let Some(win) = app.get_webview_window("hud") {
                 apply_overlay_policy(&win);
+            }
+
+            if let Err(err) = register_hotkeys(app.handle()) {
+                eprintln!("HOTKEY_ERROR registration failed: {err}");
             }
 
             // Headless verification hook: start without a human clicking Start.

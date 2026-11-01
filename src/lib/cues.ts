@@ -19,13 +19,16 @@ export const HOLD_THRESHOLD_MS = 1200;
 export function cueChips(cue: Cue): string[] {
   const chips: string[] = [];
 
-  if (cue.tone === "down") chips.push("⬇ DOWN");
-  if (cue.tone === "up") chips.push("⬆ UP");
+  // Labels mirror the script's own annotation vocabulary so the HUD reads the same way
+  // the rep wrote the script.
+  if (cue.tone === "down") chips.push("⬇️ DOWN");
+  if (cue.tone === "up") chips.push("🤔 CURIOUS");
 
-  if (cue.pace === "slow") chips.push("🐢 SLOW");
-  if (cue.pace === "fast") chips.push("⚡ FAST");
+  if (cue.pace === "slow") chips.push("🐢 SLOW & LOW");
+  if (cue.pace === "fast") chips.push("⚡ PACE UP");
 
-  if (cue.pauseAfterMs >= HOLD_THRESHOLD_MS) chips.push("⏸ HOLD");
+  const hold = holdSeconds(cue);
+  if (hold !== null) chips.push(`⏸️ ${hold}s`);
 
   return chips;
 }

@@ -9,7 +9,6 @@
 //! monotonic bias (moving backwards in the script needs more evidence than moving
 //! forwards, because a sales call moves forwards).
 
-use serde::Deserialize;
 use std::collections::{HashSet, VecDeque};
 use std::time::Instant;
 
@@ -28,26 +27,109 @@ const MIN_HITS: usize = 2;
 /// higher absolute floor. Without this a single incidental word ("driving") counts as proof.
 const MIN_DOMINANT_SCORE: f64 = 1.6;
 
-#[derive(Clone, Debug, Deserialize, serde::Serialize)]
-pub struct ScriptBlock {
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ScriptLine {
     pub id: i32,
     pub phase: String,
     pub label: String,
-    pub summary: String,
-    #[serde(default)]
+    /// Original text with delivery markers intact.
+    pub raw: String,
+    /// Spoken text, markers stripped. Derived so the fixture cannot drift.
     pub body: String,
 }
 
-#[derive(Clone, Debug, Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize)]
+struct RawLine {
+    id: i32,
+    phase: String,
+    label: String,
+    raw: String,
+}
+
+#[derive(serde::Deserialize)]
+struct RawScript {
+    id: String,
+    title: String,
+    version: u32,
+    lines: Vec<RawLine>,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct ScriptFile {
     pub id: String,
     pub title: String,
     pub version: u32,
-    pub blocks: Vec<ScriptBlock>,
+    pub lines: Vec<ScriptLine>,
+}
+
+/// Removes delivery markers (`[⬇️ DOWN]`, `[⏸️ 1.5s]`, …) but keeps placeholders such as
+/// `[Name]`, mirroring the TypeScript cue parser.
+fn strip_annotations(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(start) = rest.find('[') {
+        out.push_str(&rest[..start]);
+        match rest[start..].find(']') {
+            Some(offset) => {
+                let end = start + offset;
+                if is_delivery_marker(&rest[start + 1..end]) {
+                    out.push(' ');
+                } else {
+                    out.push_str(&rest[start..=end]);
+                }
+                rest = &rest[end + 1..];
+            }
+            None => {
+                out.push_str(&rest[start..]);
+                rest = "";
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_delivery_marker(token: &str) -> bool {
+    let letters: String = token
+        .chars()
+        .filter(|c| c.is_ascii_alphabetic() || *c == '&' || c.is_whitespace())
+        .collect();
+    let normalised = letters
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_uppercase();
+
+    if matches!(
+        normalised.as_str(),
+        "DOWN" | "UP" | "SLOW & LOW" | "SLOW AND LOW" | "PACE UP" | "CURIOUS"
+    ) {
+        return true;
+    }
+    // Pause marker such as "⏸️ 1.5s": digits plus a trailing unit, no other words.
+    token.chars().any(|c| c.is_ascii_digit()) && (normalised.is_empty() || normalised == "S")
 }
 
 pub fn load_script() -> Result<ScriptFile, String> {
-    serde_json::from_str(SCRIPT_JSON).map_err(|e| format!("script fixture is malformed: {e}"))
+    let raw: RawScript = serde_json::from_str(SCRIPT_JSON)
+        .map_err(|e| format!("script fixture is malformed: {e}"))?;
+    Ok(ScriptFile {
+        id: raw.id,
+        title: raw.title,
+        version: raw.version,
+        lines: raw
+            .lines
+            .into_iter()
+            .map(|line| ScriptLine {
+                body: strip_annotations(&line.raw),
+                id: line.id,
+                phase: line.phase,
+                label: line.label,
+                raw: line.raw,
+            })
+            .collect(),
+    })
 }
 
 const STOPWORDS: &[&str] = &[
@@ -68,7 +150,7 @@ fn tokens(text: &str) -> HashSet<String> {
 }
 
 pub struct Tracker {
-    blocks: Vec<ScriptBlock>,
+    lines: Vec<ScriptLine>,
     active: i32,
     window: VecDeque<String>,
     words_since_cycle: usize,
@@ -89,10 +171,10 @@ pub struct TrackerSnapshot {
 }
 
 impl Tracker {
-    pub fn new(blocks: Vec<ScriptBlock>) -> Result<Self, String> {
-        let active = blocks.first().ok_or("script has no blocks")?.id;
+    pub fn new(lines: Vec<ScriptLine>) -> Result<Self, String> {
+        let active = lines.first().ok_or("script has no lines")?.id;
         Ok(Self {
-            blocks,
+            lines,
             active,
             window: VecDeque::with_capacity(BUFFER_WORDS),
             words_since_cycle: 0,
@@ -103,8 +185,8 @@ impl Tracker {
         })
     }
 
-    pub fn blocks(&self) -> &[ScriptBlock] {
-        &self.blocks
+    pub fn lines(&self) -> &[ScriptLine] {
+        &self.lines
     }
 
     pub fn active_id(&self) -> i32 {
@@ -146,17 +228,17 @@ impl Tracker {
             return None;
         }
 
-        let block_tokens: Vec<HashSet<String>> = self
-            .blocks
+        let line_tokens: Vec<HashSet<String>> = self
+            .lines
             .iter()
-            .map(|b| tokens(&format!("{} {} {}", b.label, b.summary, b.body)))
+            .map(|line| tokens(&format!("{} {}", line.label, line.body)))
             .collect();
 
         let mut scored: Vec<(i32, f64, usize)> = self
-            .blocks
+            .lines
             .iter()
-            .zip(block_tokens.iter())
-            .map(|(block, words)| {
+            .zip(line_tokens.iter())
+            .map(|(line, words)| {
                 let mut score = 0.0;
                 let mut hits = 0usize;
                 for token in &buffer {
@@ -164,14 +246,11 @@ impl Tracker {
                         continue;
                     }
                     hits += 1;
-                    let df = block_tokens
-                        .iter()
-                        .filter(|set| set.contains(token))
-                        .count() as f64;
-                    // Distinctive words count more than words every block shares.
-                    score += (block_tokens.len() as f64 / df.max(1.0)).ln().max(0.05);
+                    let df = line_tokens.iter().filter(|set| set.contains(token)).count() as f64;
+                    // Distinctive words count more than words every line shares.
+                    score += (line_tokens.len() as f64 / df.max(1.0)).ln().max(0.05);
                 }
-                (block.id, score, hits)
+                (line.id, score, hits)
             })
             .collect();
 
@@ -196,7 +275,7 @@ impl Tracker {
 
     /// Applies hysteresis. Returns the new active id when a change is committed.
     pub fn consider(&mut self, proposed: i32, confident: bool) -> Option<i32> {
-        if !self.blocks.iter().any(|b| b.id == proposed) {
+        if !self.lines.iter().any(|line| line.id == proposed) {
             return None;
         }
         if proposed == self.active {
@@ -236,7 +315,7 @@ impl Tracker {
 
     /// Manual override always wins immediately.
     pub fn manual(&mut self, delta: i32) -> i32 {
-        let ids: Vec<i32> = self.blocks.iter().map(|b| b.id).collect();
+        let ids: Vec<i32> = self.lines.iter().map(|line| line.id).collect();
         let index = ids.iter().position(|&id| id == self.active).unwrap_or(0) as i32;
         let next = (index + delta).clamp(0, ids.len() as i32 - 1) as usize;
         self.active = ids[next];
@@ -258,13 +337,15 @@ impl Tracker {
         }
     }
 
-    /// Blocks within reach of the current position, used to shrink the LLM prompt.
-    pub fn candidate_window(&self) -> Vec<ScriptBlock> {
-        let ids: Vec<i32> = self.blocks.iter().map(|b| b.id).collect();
+    /// Lines within reach of the current position, used to shrink the LLM prompt. With
+    /// line-level tracking this is wider than before, because one sentence is a much smaller
+    /// step than one paragraph.
+    pub fn candidate_window(&self) -> Vec<ScriptLine> {
+        let ids: Vec<i32> = self.lines.iter().map(|line| line.id).collect();
         let index = ids.iter().position(|&id| id == self.active).unwrap_or(0);
-        let start = index.saturating_sub(2);
-        let end = (index + 3).min(self.blocks.len());
-        self.blocks[start..end].to_vec()
+        let start = index.saturating_sub(3);
+        let end = (index + 4).min(self.lines.len());
+        self.lines[start..end].to_vec()
     }
 }
 
@@ -273,17 +354,18 @@ const DEEPSEEK_URL: &str = "https://api.deepseek.com/chat/completions";
 const LLM_TIMEOUT_MS: u64 = 900;
 
 const CLASSIFIER_SYSTEM: &str = "You are an invisible real-time sales co-pilot. Your only task \
-is to track which script block the salesperson is currently delivering. Match semantic intent, \
-not exact wording: if they paraphrase, map to the corresponding concept. If they are off-script, \
-handling an interruption, or the intent is ambiguous, return the current active id. Candidates \
-are limited to the blocks supplied. Reply with JSON only, exactly {\"active_id\": <int>}.";
+is to track which script LINE the salesperson is currently delivering. Each line is a single \
+spoken sentence with a numeric id. Match semantic intent, not exact wording: if they paraphrase, \
+map to the corresponding line. If they are off-script, handling an interruption, or the intent is \
+ambiguous, return the current active id. Candidates are limited to the lines supplied. Reply with \
+JSON only, exactly {\"active_id\": <int>} where the int is a line id.";
 
-/// Stage 2: asks DeepSeek to pick the block. Thinking is disabled and the prompt is capped
-/// so the call stays in the few-hundred-millisecond range.
+/// Stage 2: asks DeepSeek which line is being delivered. Thinking is disabled and the prompt is
+/// capped so the call stays in the few-hundred-millisecond range.
 pub async fn classify_with_llm(
     client: &reqwest::Client,
     api_key: &str,
-    candidates: &[ScriptBlock],
+    candidates: &[ScriptLine],
     active: i32,
     spoken: &str,
 ) -> Result<i32, String> {
@@ -375,39 +457,61 @@ mod tests {
 
     fn tracker() -> Tracker {
         let script = load_script().expect("fixture loads");
-        Tracker::new(script.blocks).expect("tracker builds")
+        Tracker::new(script.lines).expect("tracker builds")
     }
 
     #[test]
-    fn fixture_loads_with_eight_blocks() {
+    fn fixture_loads_as_granular_lines() {
         let script = load_script().unwrap();
-        assert_eq!(script.blocks.len(), 8);
-        assert_eq!(script.blocks[0].id, 1);
+        assert_eq!(script.lines.len(), 26);
+        assert_eq!(script.lines[0].id, 1);
+        assert_eq!(script.lines[25].id, 26);
     }
 
     #[test]
-    fn local_match_finds_the_missed_leads_block_from_a_paraphrase() {
+    fn annotation_stripping_keeps_placeholders_and_drops_markers() {
+        let script = load_script().unwrap();
+        let first = script.lines.iter().find(|l| l.id == 1).unwrap();
+        assert!(
+            first.body.contains("[Name]"),
+            "placeholder should survive: {}",
+            first.body
+        );
+        for line in &script.lines {
+            for marker in ["DOWN", "CURIOUS", "PACE UP", "SLOW & LOW"] {
+                assert!(
+                    !line.body.contains(marker),
+                    "line {} still contains {marker}: {}",
+                    line.id,
+                    line.body
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn local_match_finds_the_missed_leads_line_from_a_paraphrase() {
         let mut t = tracker();
         t.push_text("what happens when a lead rings while you are busy on a job site");
         let (id, confident, _) = t.local_match().expect("should match");
-        assert_eq!(id, 4);
+        assert_eq!(id, 11);
         assert!(confident, "a distinctive paraphrase should be confident");
     }
 
     #[test]
-    fn local_match_finds_the_project_photos_block() {
+    fn local_match_finds_the_project_photos_line() {
         let mut t = tracker();
         t.push_text("all those photos of your past projects do they just sit there");
         let (id, _, _) = t.local_match().expect("should match");
-        assert_eq!(id, 3);
+        assert_eq!(id, 10);
     }
 
     #[test]
-    fn local_match_finds_the_diagnosis_block() {
+    fn local_match_finds_the_money_line() {
         let mut t = tracker();
-        t.push_text("leaving fifteen k on the table every month with three operational leaks");
+        t.push_text("you are easily leaving fifteen k on the table every month");
         let (id, _, _) = t.local_match().expect("should match");
-        assert_eq!(id, 6);
+        assert_eq!(id, 20);
     }
 
     #[test]
@@ -456,10 +560,10 @@ mod tests {
         let mut t = tracker();
         assert_eq!(t.manual(-1), 1);
         assert_eq!(t.manual(1), 2);
-        for _ in 0..20 {
+        for _ in 0..40 {
             t.manual(1);
         }
-        assert_eq!(t.active_id(), 8);
+        assert_eq!(t.active_id(), 26);
     }
 
     #[test]
@@ -472,22 +576,23 @@ mod tests {
     #[test]
     fn a_single_shared_word_is_not_confident_evidence() {
         let mut t = tracker();
-        // Only "driving" overlaps any block (block 4's "driving out to tire-kickers").
-        // Everything else is off-script. This must not be treated as a match.
+        // Only "driving" overlaps any line (line 12's "driving out to tire-kickers").
+        // Everything else here is off-script. This must not be treated as a match.
         t.push_text("my cousin is driving down from Ohio next weekend");
         let (id, confident, _) = t.local_match().expect("there is some overlap");
-        assert_eq!(id, 4);
+        assert_eq!(id, 12);
         assert!(
             !confident,
-            "one shared word must not count as a confident block match"
+            "one shared word must not count as a confident line match"
         );
     }
 
     #[test]
-    fn candidate_window_stays_near_the_active_block() {
+    fn candidate_window_stays_near_the_active_line() {
         let mut t = tracker();
         t.consider(5, true);
-        let ids: Vec<i32> = t.candidate_window().iter().map(|b| b.id).collect();
-        assert_eq!(ids, vec![3, 4, 5, 6, 7]);
+        let ids: Vec<i32> = t.candidate_window().iter().map(|l| l.id).collect();
+        // Three lines back, four forward, clamped at the start of the script.
+        assert_eq!(ids, vec![2, 3, 4, 5, 6, 7, 8]);
     }
 }

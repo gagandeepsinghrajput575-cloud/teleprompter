@@ -59,43 +59,41 @@ describe("remodeler fixture", () => {
   const script = loadScript(fixture as never);
 
   it("loads all eight blocks", () => {
-    expect(script.blocks).toHaveLength(8);
-    expect(script.blocks.map((b) => b.id)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    expect(script.lines).toHaveLength(26);
+    expect(script.lines.map((l) => l.id)).toEqual(
+      Array.from({ length: 26 }, (_, i) => i + 1)
+    );
   });
 
-  it("derives a body for every block that matches the stored spoken text exactly", () => {
-    for (const block of script.blocks) {
-      const stored = (fixture.blocks as { id: number; body: string }[]).find(
-        (b) => b.id === block.id
-      );
-      expect(block.body, `block ${block.id} body drifted from the raw text`).toBe(stored?.body);
-    }
+  it("keeps the four phases contiguous and in order", () => {
+    const phases = script.lines.map((l) => l.phase);
+    expect(new Set(phases).size).toBe(4);
+    expect(phases[0]).toContain("PHASE 1");
+    expect(phases[25]).toContain("PHASE 4");
+    // A phase must never reappear after a later phase has started.
+    const runs = phases.filter((p, i) => i === 0 || phases[i - 1] !== p);
+    expect(new Set(runs).size).toBe(runs.length);
   });
 
   it("leaves no annotation markers in the spoken text", () => {
-    for (const block of script.blocks) {
-      expect(block.body).not.toMatch(/\u2B07|\u23F8|\u{1F422}|\u26A1|\u{1F914}/u);
-      expect(block.body).not.toContain("DOWN");
-      expect(block.body).not.toContain("CURIOUS");
+    for (const line of script.lines) {
+      expect(line.body).not.toMatch(/\u2B07|\u23F8|\u{1F422}|\u26A1|\u{1F914}/u);
+      expect(line.body).not.toContain("DOWN");
+      expect(line.body).not.toContain("CURIOUS");
     }
   });
 
-  it("derives the expected delivery cue for every block", () => {
-    expect(script.blocks.map((b) => b.cue)).toEqual([
-      { tone: "up", pace: "normal", pauseAfterMs: 1000 },
-      { tone: "up", pace: "normal", pauseAfterMs: 0 },
-      { tone: "up", pace: "normal", pauseAfterMs: 1000 },
-      { tone: "up", pace: "normal", pauseAfterMs: 1000 },
-      { tone: "up", pace: "normal", pauseAfterMs: 0 },
-      { tone: "up", pace: "slow", pauseAfterMs: 2000 },
-      { tone: "up", pace: "normal", pauseAfterMs: 0 },
-      { tone: "down", pace: "fast", pauseAfterMs: 0 },
-    ]);
+  it("keeps the [Name] placeholder in the spoken text", () => {
+    expect(script.lines[0].body).toContain("[Name]");
   });
 
-  it("gives every block a summary for the semantic tracker to match against", () => {
-    for (const block of script.blocks) {
-      expect(block.summary.length, `block ${block.id} has no summary`).toBeGreaterThan(40);
-    }
+  it("derives cues per line, not per paragraph", () => {
+    const cue = (id: number) => script.lines.find((l) => l.id === id)?.cue;
+    expect(cue(1)).toEqual({ tone: "neutral", pace: "normal", pauseAfterMs: 0 });
+    expect(cue(2)).toEqual({ tone: "down", pace: "normal", pauseAfterMs: 0 });
+    expect(cue(6)).toEqual({ tone: "up", pace: "normal", pauseAfterMs: 1000 });
+    expect(cue(14)).toEqual({ tone: "down", pace: "slow", pauseAfterMs: 0 });
+    expect(cue(21)).toEqual({ tone: "up", pace: "normal", pauseAfterMs: 2000 });
+    expect(cue(23)).toEqual({ tone: "neutral", pace: "fast", pauseAfterMs: 0 });
   });
 });

@@ -9,11 +9,10 @@ export type Annotation =
   | { kind: "pace"; value: Exclude<Pace, "normal"> }
   | { kind: "pause"; ms: number };
 
-export type ScriptBlock = {
+export type ScriptLine = {
   id: number;
   phase: string;
   label: string;
-  summary: string;
   /** Original text, annotations included. */
   raw: string;
   /** Spoken text with annotations stripped. */
@@ -28,7 +27,7 @@ export type Script = {
   version: number;
   audience?: string;
   notes?: string;
-  blocks: ScriptBlock[];
+  lines: ScriptLine[];
 };
 
 /**
@@ -110,16 +109,16 @@ export function parseAnnotations(raw: string): {
   return { body: body.replace(/\s+/g, " ").trim(), cue, annotations };
 }
 
-type RawBlock = Omit<ScriptBlock, "body" | "cue" | "annotations">;
-type RawScript = Omit<Script, "blocks"> & { blocks: RawBlock[] };
+type RawLine = Omit<ScriptLine, "body" | "cue" | "annotations">;
+type RawScript = Omit<Script, "lines"> & { lines: RawLine[] };
 
-/** Parses every block and derives the delivery cue from its raw text. */
+/** Parses every line and derives the delivery cue from its raw text. */
 export function loadScript(raw: RawScript): Script {
   return {
     ...raw,
-    blocks: raw.blocks.map((block) => {
-      const { body, cue, annotations } = parseAnnotations(block.raw);
-      return { ...block, body, cue, annotations };
+    lines: raw.lines.map((line) => {
+      const { body, cue, annotations } = parseAnnotations(line.raw);
+      return { ...line, body, cue, annotations };
     }),
   };
 }

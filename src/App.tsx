@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { cueChips } from "./lib/cues";
@@ -12,7 +12,7 @@ type TranscriptEvent = { text: string; is_final: boolean };
 type ActiveBlockEvent = { id: number; reason: string };
 
 export default function App() {
-  const [activeId, setActiveId] = useState(script.blocks[0]?.id ?? 1);
+  const [activeId, setActiveId] = useState(script.lines[0]?.id ?? 1);
   const [reason, setReason] = useState("start");
   const [status, setStatus] = useState<StatusEvent>({ running: false, message: "idle" });
   const [spoken, setSpoken] = useState("");
@@ -92,7 +92,8 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const active = script.blocks.find((b) => b.id === activeId) ?? script.blocks[0];
+  const activeIndex = script.lines.findIndex((line) => line.id === activeId);
+  const active = script.lines[activeIndex] ?? script.lines[0];
   const activeRef = useRef<HTMLDivElement | null>(null);
 
   // The active block must stay centred, with neighbours visible above and below it.
@@ -130,33 +131,39 @@ export default function App() {
       </div>
 
       <div className="blocks">
-        {script.blocks.map((block) => (
-          <div
-            className="block"
-            key={block.id}
-            data-active={block.id === activeId}
-            ref={block.id === activeId ? activeRef : undefined}
-          >
-            <span className="label">{block.label}</span>
-            {block.body}
-            {block.id === activeId && (
-              <div className="cues">
-                {cueChips(block.cue).map((chip) => (
-                  <span className="cue" key={chip}>
-                    {chip}
-                  </span>
-                ))}
-                <span className="cue reason">{reason}</span>
+        {script.lines.map((line, i) => {
+          const state = line.id === activeId ? "active" : i < activeIndex ? "past" : "future";
+          const showPhase = i === 0 || script.lines[i - 1].phase !== line.phase;
+          return (
+            <Fragment key={line.id}>
+              {showPhase && <div className="phase">{line.phase}</div>}
+              <div
+                className="line"
+                data-state={state}
+                ref={line.id === activeId ? activeRef : undefined}
+              >
+                <span className="label">{line.label}</span>
+                {line.body}
+                {state === "active" && (
+                  <div className="cues">
+                    {cueChips(line.cue).map((chip) => (
+                      <span className="cue" key={chip}>
+                        {chip}
+                      </span>
+                    ))}
+                    <span className="cue reason">{reason}</span>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        ))}
+            </Fragment>
+          );
+        })}
       </div>
 
       <div className="footer">
         <span className="spoken">{spoken || "waiting for speech"}</span>
         <span>
-          {active.id}/{script.blocks.length}
+          {active.id}/{script.lines.length}
         </span>
       </div>
       {error && <div className="error">{error}</div>}

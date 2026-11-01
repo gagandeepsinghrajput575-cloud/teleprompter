@@ -47,7 +47,6 @@ struct ActiveBlock {
     id: i32,
     phase: String,
     label: String,
-    summary: String,
     body: String,
     reason: String,
 }
@@ -225,19 +224,18 @@ fn hud_state() -> HudState {
 
 fn emit_active(app: &tauri::AppHandle, tracker: &Arc<Mutex<Tracker>>, id: i32, reason: &str) {
     let guard = tracker.lock().unwrap();
-    if let Some(block) = guard.blocks().iter().find(|b| b.id == id) {
+    if let Some(line) = guard.lines().iter().find(|l| l.id == id) {
         println!(
-            "ACTIVE_BLOCK id={} label='{}' reason={reason}",
-            block.id, block.label
+            "ACTIVE_LINE id={} label='{}' reason={reason}",
+            line.id, line.label
         );
         let _ = app.emit(
             "active_block",
             ActiveBlock {
-                id: block.id,
-                phase: block.phase.clone(),
-                label: block.label.clone(),
-                summary: block.summary.clone(),
-                body: block.body.clone(),
+                id: line.id,
+                phase: line.phase.clone(),
+                label: line.label.clone(),
+                body: line.body.clone(),
                 reason: reason.to_string(),
             },
         );
@@ -503,8 +501,8 @@ fn audio_level(state: tauri::State<'_, AppState>) -> f32 {
 }
 
 #[tauri::command]
-fn script_blocks(state: tauri::State<'_, AppState>) -> Vec<tracker::ScriptBlock> {
-    state.tracker.lock().unwrap().blocks().to_vec()
+fn script_lines(state: tauri::State<'_, AppState>) -> Vec<tracker::ScriptLine> {
+    state.tracker.lock().unwrap().lines().to_vec()
 }
 
 fn toggle_visibility(app: &tauri::AppHandle) {
@@ -594,7 +592,7 @@ pub fn run() {
             tracker_snapshot,
             nudge,
             audio_level,
-            script_blocks,
+            script_lines,
             hud_state
         ])
         .on_window_event(|window, event| {
@@ -620,11 +618,11 @@ pub fn run() {
         .setup(|app| {
             let script = tracker::load_script().unwrap_or_else(|e| panic!("{e}"));
             println!(
-                "SCRIPT_LOADED '{}' blocks={}",
+                "SCRIPT_LOADED '{}' lines={}",
                 script.title,
-                script.blocks.len()
+                script.lines.len()
             );
-            let tracker = Tracker::new(script.blocks).expect("tracker builds");
+            let tracker = Tracker::new(script.lines).expect("tracker builds");
 
             app.manage(AppState {
                 tracker: Arc::new(Mutex::new(tracker)),

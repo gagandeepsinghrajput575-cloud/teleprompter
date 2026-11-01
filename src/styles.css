@@ -34,34 +34,53 @@ body {
   overflow: hidden;
 }
 
-.block {
+.line {
   position: relative;
-  padding: 6px 10px;
+  padding: 5px 10px;
   border-radius: 8px;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 700;
-  line-height: 1.3;
+  line-height: 1.32;
   color: #ffffff;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9);
-  opacity: 0.35;
   transition: opacity 220ms ease, font-size 220ms ease;
 }
 
-.block[data-active="true"] {
+/* The active line is centred, so already-read lines stay visible above it at 50% and
+   upcoming lines sit below at 35%. */
+.line[data-state="past"] {
+  opacity: 0.5;
+}
+
+.line[data-state="future"] {
+  opacity: 0.35;
+}
+
+.line[data-state="active"] {
   opacity: 1;
-  font-size: 17px;
+  font-size: 16px;
   background: rgba(255, 255, 255, 0.06);
 }
 
-.block[data-active="true"]::before {
+.line[data-state="active"]::before {
   content: "";
   position: absolute;
   left: 0;
-  top: 6px;
-  bottom: 6px;
+  top: 5px;
+  bottom: 5px;
   width: 3px;
   border-radius: 2px;
   background: #d4af37;
+}
+
+/* Phase heading, shown only when the phase changes so the grouping stays legible. */
+.phase {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(212, 175, 55, 0.55);
+  padding: 5px 10px 1px;
 }
 
 .label {

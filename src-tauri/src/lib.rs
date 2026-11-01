@@ -38,6 +38,10 @@ struct AppState {
     http: reqwest::Client,
 }
 
+/// Latest window placement, written to disk by a debounce thread. A process-wide `static`
+/// avoids threading a borrow of the app state through window-event closures.
+static GEOMETRY: Mutex<Option<Geometry>> = Mutex::new(None);
+
 #[derive(Clone, serde::Serialize)]
 struct ActiveBlock {
     id: i32,
@@ -59,6 +63,54 @@ struct SessionInfo {
     device: audio::CaptureStats,
     deepgram: bool,
     deepseek: bool,
+}
+
+#[derive(serde::Serialize)]
+struct HudState {
+    edit_mode: bool,
+}
+
+/// Persisted window placement. Physical pixels, so it survives a relaunch unchanged.
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
+struct Geometry {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+fn geometry_file(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    let dir = app.path().app_config_dir().ok()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join("window.json"))
+}
+
+fn read_geometry(app: &tauri::AppHandle) -> Option<Geometry> {
+    let raw = std::fs::read_to_string(geometry_file(app)?).ok()?;
+    serde_json::from_str(&raw).ok()
+}
+
+fn write_geometry(app: &tauri::AppHandle, geometry: Geometry) {
+    if let Some(path) = geometry_file(app) {
+        if let Ok(raw) = serde_json::to_string_pretty(&geometry) {
+            if let Err(err) = std::fs::write(&path, raw) {
+                eprintln!("GEOMETRY_WRITE_ERROR {err}");
+            }
+        }
+    }
+}
+
+/// Records the latest placement. Uses the process-wide slot so no borrow of `AppState`
+/// has to outlive a mutex guard.
+fn record_geometry(geometry: Geometry) {
+    match GEOMETRY.lock() {
+        Ok(mut guard) => *guard = Some(geometry),
+        Err(err) => eprintln!("GEOMETRY_LOCK_ERROR {err}"),
+    }
+}
+
+fn take_geometry() -> Option<Geometry> {
+    GEOMETRY.lock().ok().and_then(|mut guard| guard.take())
 }
 
 fn report(win: &tauri::WebviewWindow) -> String {
@@ -151,12 +203,24 @@ fn hud_report(window: tauri::WebviewWindow) -> String {
 }
 
 #[tauri::command]
-fn set_click_through(window: tauri::WebviewWindow, enabled: bool) -> Result<String, String> {
+fn set_click_through(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    enabled: bool,
+) -> Result<String, String> {
     window
         .set_ignore_cursor_events(enabled)
         .map_err(|e| e.to_string())?;
     CLICK_THROUGH.store(enabled, Ordering::Relaxed);
+    let _ = app.emit("edit_mode", !enabled);
     Ok(report(&window))
+}
+
+#[tauri::command]
+fn hud_state() -> HudState {
+    HudState {
+        edit_mode: !CLICK_THROUGH.load(Ordering::Relaxed),
+    }
 }
 
 fn emit_active(app: &tauri::AppHandle, tracker: &Arc<Mutex<Tracker>>, id: i32, reason: &str) {
@@ -305,34 +369,61 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
 
             let mut committed: Option<(i32, &'static str)> = None;
 
-            if let Some((id, true, _)) = local {
-                // Stage 1 was unambiguous: commit without paying for a model call.
-                if let Some(new_id) = tracker_arc.lock().unwrap().consider(id, true) {
-                    committed = Some((new_id, "stage1-local"));
-                }
-            } else {
-                // Stage 2: only reached when stage 1 is unsure.
-                let mut proposal = local.map(|(id, _, _)| id);
+            if tracker::needs_llm(local) {
+                // Stage 2: stage 1 was unsure — a paraphrase, off-script speech, or ambiguity.
+                // Only the model may propose here. Falling back to the unconfident local guess
+                // would let two weak guesses confirm each other and advance the block on
+                // off-script speech, which is exactly what the model is meant to prevent.
+                let mut proposal: Option<i32> = None;
+                let mut decided_by_llm = false;
                 if let Some(key) = llm_key.as_ref() {
                     if llm_failures < 3 {
+                        println!(
+                            "TRACKER_ROUTE stage2-llm active={active} buffer_words={}",
+                            buffer.split_whitespace().count()
+                        );
                         match tracker::classify_with_llm(&http, key, &candidates, active, &buffer)
                             .await
                         {
                             Ok(id) => {
                                 llm_failures = 0;
                                 proposal = Some(id);
+                                decided_by_llm = true;
+                                println!("TRACKER_LLM_OK active={id}");
                             }
                             Err(err) => {
                                 llm_failures += 1;
                                 eprintln!("TRACKER_LLM_ERROR n={llm_failures} {err}");
                             }
                         }
+                    } else {
+                        println!("TRACKER_ROUTE stage1-local (llm circuit open)");
                     }
+                } else {
+                    println!("TRACKER_ROUTE stage1-local (no deepseek key)");
                 }
                 if let Some(id) = proposal {
                     if let Some(new_id) = tracker_arc.lock().unwrap().consider(id, false) {
-                        committed = Some((new_id, "stage2-llm"));
+                        committed = Some((
+                            new_id,
+                            if decided_by_llm {
+                                "stage2-llm"
+                            } else {
+                                "stage1-local"
+                            },
+                        ));
                     }
+                } else {
+                    // Ambiguous or off-script and no model verdict: hold position.
+                    println!(
+                        "TRACKER_RETAIN active={active} reason=no-model-decision buffer_words={}",
+                        buffer.split_whitespace().count()
+                    );
+                }
+            } else if let Some((id, _, _)) = local {
+                // Stage 1 was unambiguous: commit without paying for a model call.
+                if let Some(new_id) = tracker_arc.lock().unwrap().consider(id, true) {
+                    committed = Some((new_id, "stage1-local"));
                 }
             }
 
@@ -440,7 +531,12 @@ fn toggle_edit_mode(app: &tauri::AppHandle) {
     match window.set_ignore_cursor_events(click_through) {
         Ok(()) => {
             CLICK_THROUGH.store(click_through, Ordering::Relaxed);
-            println!("HOTKEY click_through={click_through}");
+            println!(
+                "HOTKEY click_through={click_through} edit_mode={}",
+                !click_through
+            );
+            // Tell the HUD to show its grab handle and unlocked outline.
+            let _ = app.emit("edit_mode", !click_through);
         }
         Err(err) => eprintln!("HOTKEY_ERROR click_through: {err}"),
     }
@@ -498,8 +594,29 @@ pub fn run() {
             tracker_snapshot,
             nudge,
             audio_level,
-            script_blocks
+            script_blocks,
+            hud_state
         ])
+        .on_window_event(|window, event| {
+            // Dragging and resizing fire continuously; just record the latest placement and
+            // let the debounce thread write it once the window settles.
+            if matches!(
+                event,
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_)
+            ) {
+                let app = window.app_handle();
+                if let Some(win) = app.get_webview_window("hud") {
+                    if let (Ok(pos), Ok(size)) = (win.outer_position(), win.inner_size()) {
+                        record_geometry(Geometry {
+                            x: pos.x,
+                            y: pos.y,
+                            width: size.width,
+                            height: size.height,
+                        });
+                    }
+                }
+            }
+        })
         .setup(|app| {
             let script = tracker::load_script().unwrap_or_else(|e| panic!("{e}"));
             println!(
@@ -518,6 +635,52 @@ pub fn run() {
                     .timeout(Duration::from_secs(5))
                     .build()
                     .expect("http client"),
+            });
+
+            // Restore the last placement. `center: true` used to live in tauri.conf.json and
+            // silently overrode this, and macOS also repositions the window when it is first
+            // shown — so the position is re-applied just after the window appears.
+            if let (Some(geo), Some(win)) =
+                (read_geometry(app.handle()), app.get_webview_window("hud"))
+            {
+                let _ = win.set_size(tauri::PhysicalSize::new(geo.width, geo.height));
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_millis(500));
+                    if let Some(win) = handle.get_webview_window("hud") {
+                        if let Some(geo) = read_geometry(&handle) {
+                            let _ = win.set_position(tauri::PhysicalPosition::new(geo.x, geo.y));
+                            // set_position is dispatched to the main thread, so the value is
+                            // not readable immediately; let it settle before measuring.
+                            std::thread::sleep(Duration::from_millis(400));
+                            println!(
+                                "WINDOW_GEOMETRY_RESTORED wanted=({},{}) actual={:?}",
+                                geo.x,
+                                geo.y,
+                                win.outer_position().map(|p| (p.x, p.y)).ok()
+                            );
+                        }
+                    }
+                });
+            }
+
+            // Test hook: move the window once so the persist path can be proven headlessly.
+            if std::env::var("STEALTH_TEST_MOVE").is_ok() {
+                if let Some(win) = app.get_webview_window("hud") {
+                    let _ = win.set_position(tauri::PhysicalPosition::new(120, 160));
+                    println!("TEST_MOVE applied x=120 y=160");
+                }
+            }
+
+            // Debounced writer: dragging fires Moved continuously, so persist after quiet.
+            let flush_handle = app.handle().clone();
+            std::thread::spawn(move || loop {
+                std::thread::sleep(Duration::from_millis(700));
+                let pending = take_geometry();
+                if let Some(geo) = pending {
+                    write_geometry(&flush_handle, geo);
+                    println!("WINDOW_GEOMETRY_SAVED x={} y={}", geo.x, geo.y);
+                }
             });
 
             if let Some(win) = app.get_webview_window("hud") {

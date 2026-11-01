@@ -19,6 +19,18 @@ export default function App() {
   const [level, setLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+
+  // Edit mode = click-through is off: the window is unlocked, draggable and clickable.
+  useEffect(() => {
+    invoke<{ edit_mode: boolean }>("hud_state")
+      .then((s) => setEditMode(s.edit_mode))
+      .catch(() => undefined);
+    const off = listen<boolean>("edit_mode", (e) => setEditMode(e.payload));
+    return () => {
+      off.then((f) => f());
+    };
+  }, []);
 
   // Live pipeline events emitted from Rust.
   useEffect(() => {
@@ -89,11 +101,25 @@ export default function App() {
     activeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [activeId]);
 
+  const stageLabel = reason.startsWith("stage2")
+    ? "STAGE 2 (DEEPSEEK)"
+    : reason.startsWith("stage1")
+      ? "STAGE 1 (LOCAL)"
+      : "MANUAL";
+
   return (
-    <div className="hud">
+    <div className="hud" data-edit={editMode}>
+      {editMode && (
+        <div className="grab" data-tauri-drag-region title="Drag to reposition">
+          <span className="grab-dots" data-tauri-drag-region />
+        </div>
+      )}
       <div className="bar">
         <span className={status.running ? "dot live" : "dot"} />
         <span className="status">{status.message}</span>
+        <span className="stage" data-stage={stageLabel.includes("2") ? "2" : "1"}>
+          {stageLabel}
+        </span>
         <button className="btn" onClick={status.running ? stop : start} disabled={busy}>
           {status.running ? "Stop" : "Start"}
         </button>

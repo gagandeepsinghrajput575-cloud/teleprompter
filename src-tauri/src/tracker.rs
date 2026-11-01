@@ -22,6 +22,11 @@ const BUFFER_WORDS: usize = 18;
 pub const WORDS_PER_CYCLE: usize = 6;
 /// Stage 1 confidence margin: best block must beat the runner-up by this ratio.
 const LOCAL_MARGIN: f64 = 1.25;
+/// Minimum number of distinct shared words before stage 1 may trust itself.
+const MIN_HITS: usize = 2;
+/// When no other block scores at all, the ratio test is vacuously satisfied, so require a
+/// higher absolute floor. Without this a single incidental word ("driving") counts as proof.
+const MIN_DOMINANT_SCORE: f64 = 1.6;
 
 #[derive(Clone, Debug, Deserialize, serde::Serialize)]
 pub struct ScriptBlock {
@@ -147,31 +152,45 @@ impl Tracker {
             .map(|b| tokens(&format!("{} {} {}", b.label, b.summary, b.body)))
             .collect();
 
-        let mut scored: Vec<(i32, f64)> = self
+        let mut scored: Vec<(i32, f64, usize)> = self
             .blocks
             .iter()
             .zip(block_tokens.iter())
             .map(|(block, words)| {
-                let score: f64 = buffer
-                    .iter()
-                    .filter(|w| words.contains(*w))
-                    .map(|w| {
-                        let df = block_tokens.iter().filter(|set| set.contains(w)).count() as f64;
-                        // Distinctive words count more than words every block shares.
-                        (block_tokens.len() as f64 / df.max(1.0)).ln().max(0.05)
-                    })
-                    .sum();
-                (block.id, score)
+                let mut score = 0.0;
+                let mut hits = 0usize;
+                for token in &buffer {
+                    if !words.contains(token) {
+                        continue;
+                    }
+                    hits += 1;
+                    let df = block_tokens
+                        .iter()
+                        .filter(|set| set.contains(token))
+                        .count() as f64;
+                    // Distinctive words count more than words every block shares.
+                    score += (block_tokens.len() as f64 / df.max(1.0)).ln().max(0.05);
+                }
+                (block.id, score, hits)
             })
             .collect();
 
         scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        let (best_id, best) = scored[0];
+        let (best_id, best, best_hits) = scored[0];
         if best <= 0.0 {
             return None;
         }
-        let second = scored.get(1).map(|(_, s)| *s).unwrap_or(0.0);
-        let confident = best >= second * LOCAL_MARGIN && best >= 1.0;
+        let second = scored.get(1).map(|(_, score, _)| *score).unwrap_or(0.0);
+
+        // A lone shared word must not count as evidence. When every other block scores zero
+        // the ratio test passes trivially, which is how off-script speech ("driving down from
+        // Ohio") used to jump to a block that merely contains the word "driving".
+        let margin_ok = if second <= f64::EPSILON {
+            best >= MIN_DOMINANT_SCORE
+        } else {
+            best >= second * LOCAL_MARGIN
+        };
+        let confident = best_hits >= MIN_HITS && margin_ok;
         Some((best_id, confident, best))
     }
 
@@ -323,6 +342,33 @@ pub async fn classify_with_llm(
     Ok(id)
 }
 
+/// True when stage 1 cannot settle the block on its own, so the model must be consulted.
+/// Confident local matches short-circuit stage 2 and cost nothing.
+pub fn needs_llm(local: Option<(i32, bool, f64)>) -> bool {
+    !matches!(local, Some((_, true, _)))
+}
+
+#[cfg(test)]
+mod stage_routing_tests {
+    use super::needs_llm;
+
+    #[test]
+    fn a_confident_local_match_skips_the_model() {
+        assert!(!needs_llm(Some((4, true, 3.2))));
+    }
+
+    #[test]
+    fn an_unconfident_local_match_routes_to_the_model() {
+        assert!(needs_llm(Some((4, false, 1.1))));
+    }
+
+    #[test]
+    fn no_local_match_at_all_routes_to_the_model() {
+        // This is the "off-script / paraphrase" case the fallback exists for.
+        assert!(needs_llm(None));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,6 +467,20 @@ mod tests {
         let mut t = tracker();
         t.push_text(&"word ".repeat(50));
         assert_eq!(t.snapshot().buffered_words, BUFFER_WORDS);
+    }
+
+    #[test]
+    fn a_single_shared_word_is_not_confident_evidence() {
+        let mut t = tracker();
+        // Only "driving" overlaps any block (block 4's "driving out to tire-kickers").
+        // Everything else is off-script. This must not be treated as a match.
+        t.push_text("my cousin is driving down from Ohio next weekend");
+        let (id, confident, _) = t.local_match().expect("there is some overlap");
+        assert_eq!(id, 4);
+        assert!(
+            !confident,
+            "one shared word must not count as a confident block match"
+        );
     }
 
     #[test]

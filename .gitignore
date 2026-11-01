@@ -1,0 +1,25 @@
+# Zenith mission artifacts (local audit trail, not product source)
+.zenith/
+
+# dependencies
+node_modules/
+src-tauri/target/
+
+# build output
+dist/
+dist-ssr/
+
+# editor / OS
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+*.local
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# rust
+**/*.rs.bk

@@ -169,6 +169,13 @@ can_join_all_spaces={:?} fullscreen_auxiliary={:?}",
             overlay_macos::is_key_window(win),
             overlay_macos::can_become_key_window(win),
         );
+        let _ = write!(
+            line,
+            " level={:?} hides_on_deactivate={:?} occlusion={:?}",
+            overlay_macos::window_level(win),
+            overlay_macos::hides_on_deactivate(win),
+            overlay_macos::occlusion_state(win),
+        );
     }
 
     line
@@ -220,6 +227,15 @@ fullscreen_auxiliary={:?}",
                 overlay_macos::has_fullscreen_auxiliary(win),
             ),
             None => eprintln!("OVERLAY_ERROR could not access NSWindow for Space policy"),
+        }
+
+        // Order matters: `alwaysOnTop` above only reaches floating level 3, so the level is
+        // raised afterwards. Without this, switching to Chrome can bury the HUD.
+        match overlay_macos::raise_above_apps(win) {
+            Some((before, after, hides)) => {
+                println!("OVERLAY_LEVEL before={before} after={after} hides_on_deactivate={hides}")
+            }
+            None => eprintln!("OVERLAY_ERROR could not raise window level"),
         }
     }
 
@@ -633,6 +649,55 @@ fn register_hotkeys(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
+/// Keeps the HUD in the status-bar band.
+///
+/// The level cannot be set once and forgotten: something in the startup path (before the
+/// window settles, and again whenever the window is re-shown) puts it back to floating level 5,
+/// which is why the HUD could vanish behind Chrome. Mutating `NSWindow` off the main thread
+/// deadlocks — attempted once, and the calling thread hung — so every re-assert is dispatched.
+fn enforce_overlay_level(handle: &tauri::AppHandle) {
+    let inner = handle.clone();
+    let _ = handle.run_on_main_thread(move || {
+        if let Some(win) = inner.get_webview_window("hud") {
+            if let Some((before, after, _)) = overlay_macos::raise_above_apps(&win) {
+                if before != after {
+                    // Only logged when it actually had to correct something, so a stable
+                    // window stays quiet.
+                    println!("OVERLAY_LEVEL_ENFORCED before={before} after={after}");
+                    let _ = std::io::stdout().flush();
+                }
+            }
+        }
+    });
+}
+
+/// One line describing whether the HUD is still on screen. Reads must happen on the main
+/// thread, so the values are collected there and handed back over a channel.
+#[cfg(target_os = "macos")]
+fn focus_snapshot(handle: &tauri::AppHandle) -> String {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let inner = handle.clone();
+    let dispatched = handle.run_on_main_thread(move || {
+        let line = match inner.get_webview_window("hud") {
+            Some(win) => format!(
+                "level={:?} visible={:?} occlusion={:?} hides_on_deactivate={:?} key={:?}",
+                overlay_macos::window_level(&win),
+                win.is_visible().ok(),
+                overlay_macos::occlusion_state(&win).map(|bits| (bits, bits & 2 != 0)),
+                overlay_macos::hides_on_deactivate(&win),
+                overlay_macos::is_key_window(&win),
+            ),
+            None => "no hud window".to_string(),
+        };
+        let _ = tx.send(line);
+    });
+    if dispatched.is_err() {
+        return "dispatch failed".into();
+    }
+    rx.recv_timeout(Duration::from_secs(2))
+        .unwrap_or_else(|_| "timeout".into())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -809,6 +874,37 @@ pub fn run() {
                 });
             }
 
+            // Test hook: measure the HUD against Chrome. Reads the window state, activates
+            // Chrome, then reads it again — the only way to see whether the HUD survives
+            // another app taking focus without a human looking at the screen.
+            if std::env::var("STEALTH_FOCUS_TEST").is_ok() {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    // Sample the level over the first seconds so a reset can be timed.
+                    for tick in 0..8 {
+                        std::thread::sleep(Duration::from_millis(500));
+                        if let Some(win) = handle.get_webview_window("hud") {
+                            if tick == 2 {
+                                enforce_overlay_level(&handle);
+                                println!("LEVEL_REASSERT dispatched");
+                            }
+                            println!(
+                                "LEVEL_TRACE t_ms={} level={:?}",
+                                (tick + 1) * 500,
+                                overlay_macos::window_level(&win)
+                            );
+                        }
+                    }
+                    println!("FOCUS_TEST before {}", focus_snapshot(&handle));
+                    let _ = std::process::Command::new("osascript")
+                        .args(["-e", "tell application \"Google Chrome\" to activate"])
+                        .status();
+                    std::thread::sleep(Duration::from_millis(3000));
+                    println!("FOCUS_TEST after_chrome {}", focus_snapshot(&handle));
+                    let _ = std::io::stdout().flush();
+                });
+            }
+
             // Test hook: move the window once so the persist path can be proven headlessly.
             if std::env::var("STEALTH_TEST_MOVE").is_ok() {
                 if let Some(win) = app.get_webview_window("hud") {
@@ -830,6 +926,16 @@ pub fn run() {
 
             if let Some(win) = app.get_webview_window("hud") {
                 apply_overlay_policy(&win);
+            }
+
+            // Watchdog: the level is reverted during startup, so it is re-asserted on a timer.
+            // This is also what keeps the HUD above a window that later takes focus.
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(Duration::from_millis(1500));
+                    enforce_overlay_level(&handle);
+                });
             }
 
             // A click-through HUD must never depend on a single global hotkey to be unlocked:

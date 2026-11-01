@@ -8,7 +8,8 @@
 
 use objc2::MainThreadMarker;
 use objc2_app_kit::{
-    NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSWindow, NSWindowCollectionBehavior,
+    NSApplication, NSEvent, NSEventModifierFlags, NSEventType, NSStatusWindowLevel, NSWindow,
+    NSWindowCollectionBehavior,
 };
 use objc2_foundation::NSPoint;
 
@@ -193,6 +194,50 @@ pub fn inject_drag(win: &tauri::WebviewWindow) -> String {
     }
     post(NSEventType::LeftMouseUp, 60.0, -36.0, 1);
     format!("gesture x0={x0:.0} y0={y0:.0}")
+}
+
+/// `NSWindow.level` — the stacking band. Tauri's `alwaysOnTop` only reaches
+/// `NSFloatingWindowLevel` (3).
+pub fn window_level(win: &tauri::WebviewWindow) -> Option<isize> {
+    let ptr = ns_window(win)?;
+    // SAFETY: `ns_window()` returned a non-null NSWindow owned by Tauri for this window.
+    let ns = unsafe { &*ptr };
+    Some(ns.level())
+}
+
+/// `NSWindow.hidesOnDeactivate` — when true the window disappears the moment another app
+/// becomes active, which looks exactly like "it does not come up on Chrome".
+pub fn hides_on_deactivate(win: &tauri::WebviewWindow) -> Option<bool> {
+    let ptr = ns_window(win)?;
+    // SAFETY: `ns_window()` returned a non-null NSWindow owned by Tauri for this window.
+    let ns = unsafe { &*ptr };
+    Some(ns.hidesOnDeactivate())
+}
+
+/// `NSWindow.occlusionState` as a raw bitmask; `VISIBLE` is bit 1.
+pub fn occlusion_state(win: &tauri::WebviewWindow) -> Option<usize> {
+    let ptr = ns_window(win)?;
+    // SAFETY: `ns_window()` returned a non-null NSWindow owned by Tauri for this window.
+    let ns = unsafe { &*ptr };
+    Some(ns.occlusionState().0)
+}
+
+/// Raises the HUD into the status-bar band and stops AppKit from hiding it when another app
+/// takes focus.
+///
+/// `alwaysOnTop` alone puts the window at level 3, which is below where macOS composites a
+/// browser window, so switching to Chrome can bury the HUD. `FullScreenAuxiliary` gets it into
+/// a fullscreen Space, but the level still decides whether it is drawn above that Space's
+/// window. Level 25 is the status-bar band: above ordinary app windows, below alerts and the
+/// screen saver.
+pub fn raise_above_apps(win: &tauri::WebviewWindow) -> Option<(isize, isize, bool)> {
+    let ptr = ns_window(win)?;
+    // SAFETY: `ns_window()` returned a non-null NSWindow owned by Tauri for this window.
+    let ns = unsafe { &*ptr };
+    let before = ns.level();
+    ns.setLevel(NSStatusWindowLevel);
+    ns.setHidesOnDeactivate(false);
+    Some((before, ns.level(), ns.hidesOnDeactivate()))
 }
 
 /// Adds `FullScreenAuxiliary` and `CanJoinAllSpaces`. Without these, macOS keeps the

@@ -43,6 +43,13 @@ npx tauri build --bundles app
 > Note: `npm run tauri build --bundles app` does **not** work — npm consumes `--bundles` as its
 > own config flag and passes `app` to `cargo`, which fails with `unexpected argument 'app'`.
 
+> Note: `npm run tauri dev` needs `cargo` on `PATH`. If you installed Rust with rustup, export it
+> first in non-interactive shells:
+>
+> ```bash
+> export PATH="$HOME/.cargo/bin:$PATH"
+> ```
+
 The build is **ad-hoc signed** (`signingIdentity: "-"`). There is no Apple Developer ID and no
 notarization, because this app targets the developer's own machine. See
 `docs/architecture.md` for the consequences (microphone permission behaviour across rebuilds).

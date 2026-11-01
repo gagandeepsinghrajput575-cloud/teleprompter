@@ -1,0 +1,73 @@
+{
+  "id": "remodeler-discovery-v1",
+  "title": "Remodeler AI Discovery — High-Ticket Ops",
+  "version": 1,
+  "audience": "remodeling contractors, roofers, builders",
+  "notes": "Spoken text is in `body` with annotations stripped. `raw` keeps the original delivery annotations so they can be re-parsed. `summary` is what the semantic tracker matches against.",
+  "blocks": [
+    {
+      "id": 1,
+      "phase": "PHASE 1: SET THE FRAME",
+      "label": "Set the Frame",
+      "summary": "Sets the frame: not here to pitch today, only wants to learn how the firm operates day-to-day, will build a live prototype if there is a clear win and say so straight if not.",
+      "raw": "Hey [Name], appreciate you carving out the time. [⬇️ DOWN] Just to set the stage, I'm not here to pitch you today. [⬇️ DOWN] I really just want to learn how the firm operates day-to-day. If I see a clear way AI can save you hours or add revenue, I'll build a live prototype for you to see next time. If not, I'll tell you straight and we part ways. [⏸️ 1s] Sound fair? [🤔 CURIOUS]",
+      "body": "Hey [Name], appreciate you carving out the time. Just to set the stage, I'm not here to pitch you today. I really just want to learn how the firm operates day-to-day. If I see a clear way AI can save you hours or add revenue, I'll build a live prototype for you to see next time. If not, I'll tell you straight and we part ways. Sound fair?"
+    },
+    {
+      "id": 2,
+      "phase": "PHASE 2: THE 4 DISCOVERY BUCKETS",
+      "label": "Personal Time Drain",
+      "summary": "Discovery bucket 1: bird's-eye walk through of a typical day, and what is eating up the most personal time right now.",
+      "raw": "So starting from a bird's-eye view, walk me through a typical day. [⬇️ DOWN] Out of everything you do, what's eating up most of your personal time right now? [🤔 CURIOUS]",
+      "body": "So starting from a bird's-eye view, walk me through a typical day. Out of everything you do, what's eating up most of your personal time right now?"
+    },
+    {
+      "id": 3,
+      "phase": "PHASE 2: THE 4 DISCOVERY BUCKETS",
+      "label": "Lead Flow & Project Photos",
+      "summary": "Discovery bucket 2: how new jobs actually come in right now at the front end, and what happens to all the photos of past projects — whether they just sit there unused.",
+      "raw": "Makes sense. Looking at the front end, how are new jobs actually coming in right now? [⏸️ 1s] And all those photos of your past projects—what happens to those, do they mostly just sit there? [🤔 CURIOUS]",
+      "body": "Makes sense. Looking at the front end, how are new jobs actually coming in right now? And all those photos of your past projects—what happens to those, do they mostly just sit there?"
+    },
+    {
+      "id": 4,
+      "phase": "PHASE 2: THE 4 DISCOVERY BUCKETS",
+      "label": "Missed Leads On Site",
+      "summary": "Discovery bucket 3: what happens when a new lead calls while they are busy on a job site, and how much time is wasted calling back or driving out to tire-kickers without budget.",
+      "raw": "Got it. Now, what happens when a new lead calls while you're busy on a job site? [⏸️ 1s] How much time do you think you waste calling back or driving out to tire-kickers who don't even have the budget? [🤔 CURIOUS]",
+      "body": "Got it. Now, what happens when a new lead calls while you're busy on a job site? How much time do you think you waste calling back or driving out to tire-kickers who don't even have the budget?"
+    },
+    {
+      "id": 5,
+      "phase": "PHASE 2: THE 4 DISCOVERY BUCKETS",
+      "label": "Admin Bleed",
+      "summary": "Discovery bucket 4: once a client is signed, the most repetitive and annoying computer work that they or the team must deal with every single week.",
+      "raw": "Okay, and once a client is actually signed, what's the most repetitive, annoying computer work you or the team have to deal with every week? [🤔 CURIOUS]",
+      "body": "Okay, and once a client is actually signed, what's the most repetitive, annoying computer work you or the team have to deal with every week?"
+    },
+    {
+      "id": 6,
+      "phase": "PHASE 3: CLINICAL DIAGNOSIS",
+      "label": "Three Operational Leaks",
+      "summary": "Clinical diagnosis: the trade work is not the bottleneck. Names three operational leaks — delayed lead catching while on site, relying on referrals instead of automating Google reviews from past projects, and evening admin bleed — totalling about $15k left on the table every month.",
+      "raw": "[🐢 SLOW & LOW] Okay, I've got a really good picture of how things run. [⬇️ DOWN] Honestly [Name], your actual trade work isn't the bottleneck at all. Looking at your workflow, you have three specific operational leaks: [⬇️ DOWN] First, the delay in catching leads when you're busy on site. Second, relying on referrals instead of turning your past projects into automated Google reviews. And third, that evening admin bleed. [⏸️ 1.5s] If you add those up, you're easily leaving $15k on the table every month. [⬇️ DOWN] [⏸️ 2s] Does that diagnosis feel spot-on to you? [🤔 CURIOUS]",
+      "body": "Okay, I've got a really good picture of how things run. Honestly [Name], your actual trade work isn't the bottleneck at all. Looking at your workflow, you have three specific operational leaks: First, the delay in catching leads when you're busy on site. Second, relying on referrals instead of turning your past projects into automated Google reviews. And third, that evening admin bleed. If you add those up, you're easily leaving $15k on the table every month. Does that diagnosis feel spot-on to you?"
+    },
+    {
+      "id": 7,
+      "phase": "PHASE 3: CLINICAL DIAGNOSIS",
+      "label": "Decision Authority",
+      "summary": "Qualifies decision authority: whether fixing operations is entirely their call or whether a business partner also weighs in.",
+      "raw": "Got it. Quick question—when you look at fixing operations like this, is that 100% your call, or do you have a business partner who weighs in? [🤔 CURIOUS]",
+      "body": "Got it. Quick question—when you look at fixing operations like this, is that 100% your call, or do you have a business partner who weighs in?"
+    },
+    {
+      "id": 8,
+      "phase": "PHASE 4: LOCK CALL 2",
+      "label": "Lock the Prototype Call",
+      "summary": "Locks call two: refuses to guess or send generic PDFs, will spend the next 24 hours building a custom live AI prototype from these notes so the client can test it hands-on, then books tomorrow at 14:30 or Thursday at 15:00.",
+      "raw": "[⚡ PACE UP] Awesome. Well, I don't like guessing and I don't send generic PDFs. [⬇️ DOWN] I'm going to take these exact notes and spend the next 24 hours building a custom, live AI prototype so you can actually test it with your own hands. [⬇️ DOWN] Are you in front of your computer tomorrow around 14:30, or is Thursday at 15:00 better? [⬇️ DOWN]",
+      "body": "Awesome. Well, I don't like guessing and I don't send generic PDFs. I'm going to take these exact notes and spend the next 24 hours building a custom, live AI prototype so you can actually test it with your own hands. Are you in front of your computer tomorrow around 14:30, or is Thursday at 15:00 better?"
+    }
+  ]
+}

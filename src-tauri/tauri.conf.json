@@ -24,7 +24,11 @@
         "skipTaskbar": true,
         "shadow": false,
         "focus": false,
-        "center": true
+        "center": true,
+        "windowEffects": {
+          "effects": ["hudWindow"],
+          "state": "active"
+        }
       }
     ],
     "security": {

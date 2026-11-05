@@ -276,7 +276,28 @@ body {
 }
 
 .error {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 9px;
   color: #ff8a80;
   padding: 2px 0 0;
+}
+
+.error .btn {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  font-size: 9px;
+}
+
+/* Microphone picker: only shown while stopped. */
+.picker {
+  width: 100%;
+  margin: 4px 0 0;
+  padding: 2px 4px;
+  font-size: 9px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
 }

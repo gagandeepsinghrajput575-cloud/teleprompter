@@ -8,6 +8,8 @@ use tokio::sync::mpsc;
 
 mod audio;
 mod keys;
+#[cfg(target_os = "macos")]
+mod mic_permission;
 mod stt;
 mod tracker;
 
@@ -294,6 +296,23 @@ fn drag_probe(mode: String, detail: String) {
     let _ = std::io::stdout().flush();
 }
 
+/// `open` target for the Microphone pane in System Settings.
+const MIC_SETTINGS_URL: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
+
+/// Sends the user straight to the permission they need. A denial is permanent until they change
+/// it there, so telling them without a way to act on it is not enough.
+#[tauri::command]
+fn open_mic_settings() {
+    match std::process::Command::new("open")
+        .arg(MIC_SETTINGS_URL)
+        .status()
+    {
+        Ok(_) => println!("MIC_PERMISSION opened settings"),
+        Err(err) => eprintln!("MIC_PERMISSION_ERROR cannot open settings: {err}"),
+    }
+}
+
 #[tauri::command]
 fn hud_state() -> HudState {
     HudState {
@@ -398,9 +417,14 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
     // Simulated Call Mode: replay a 16 kHz mono WAV through the real Deepgram socket.
     let stats = match std::env::var("STEALTH_SIMULATE_WAV") {
         Ok(path) if !path.trim().is_empty() => {
-            audio::replay_wav(&path, audio_tx.clone(), stop.clone())?
+            audio::replay_wav(&path, audio_tx.clone(), stop.clone(), state.level.clone())?
         }
-        _ => spawn_capture(device, audio_tx.clone(), state.level.clone(), stop.clone())?,
+        _ => {
+            // Refuse to open a stream that macOS will silently zero out.
+            #[cfg(target_os = "macos")]
+            mic_permission::ensure()?;
+            spawn_capture(device, audio_tx.clone(), state.level.clone(), stop.clone())?
+        }
     };
     *state.audio_tx.lock().unwrap() = Some(audio_tx);
 
@@ -408,6 +432,59 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
     tauri::async_runtime::spawn(async move {
         stt::run(deepgram, audio_rx, stt_tx).await;
     });
+
+    // Silence watchdog. Any cause — permission, a muted device, the wrong input, a hardware
+    // mute switch — looks identical from here: a stream that produces zeros. Rather than sit
+    // there looking alive, say so.
+    {
+        let watch_level = state.level.clone();
+        let watch_stop = stop.clone();
+        let watch_app = (*app).clone();
+        std::thread::Builder::new()
+            .name("audio-watchdog".into())
+            .spawn(move || {
+                let mut silent_ticks = 0u32;
+                let mut ticks = 0u32;
+                let mut reported = false;
+                while !watch_stop.load(Ordering::Relaxed) {
+                    std::thread::sleep(Duration::from_millis(500));
+                    ticks += 1;
+                    let rms = f32::from_bits(watch_level.load(Ordering::Relaxed));
+                    if rms.is_nan() {
+                        // The source closed: end of fixture, or the stream shut down. Nothing to
+                        // watch, and "silence" here would be a false alarm.
+                        println!("AUDIO_SOURCE_CLOSED");
+                        let _ = std::io::stdout().flush();
+                        return;
+                    }
+                    if ticks % 4 == 0 {
+                        println!("AUDIO_STATS rms={rms:.6}");
+                        let _ = std::io::stdout().flush();
+                    }
+                    if rms < 1e-5 {
+                        silent_ticks += 1;
+                    } else {
+                        silent_ticks = 0;
+                        reported = false;
+                    }
+                    // 6 ticks at 500ms = 3s of nothing at all.
+                    if silent_ticks == 6 && !reported {
+                        reported = true;
+                        println!("AUDIO_SILENT rms={rms:.6} no microphone signal after 3s");
+                        let _ = std::io::stdout().flush();
+                        let _ = watch_app.emit(
+                            "status",
+                            StatusEvent {
+                                running: true,
+                                message: "no microphone signal - check permission or input device"
+                                    .to_string(),
+                            },
+                        );
+                    }
+                }
+            })
+            .map_err(|e| format!("cannot spawn audio watchdog: {e}"))?;
+    }
 
     let tracker_arc = state.tracker.clone();
     let http = state.http.clone();
@@ -755,8 +832,53 @@ hides_on_deactivate={:?} key={:?}",
         .unwrap_or_else(|_| "timeout".into())
 }
 
+/// Mirrors `stdout`/`stderr` into `~/Library/Logs/StealthPrompter.log`.
+///
+/// A Finder-launched `.app` has no terminal, so every diagnostic this app prints went nowhere —
+/// which is a large part of why a silent microphone took this long to pin down. Runs only when
+/// fd 1 is neither a terminal nor a regular file, so dev runs and `> logfile` captures are left
+/// untouched.
+fn init_file_logging() {
+    #[cfg(unix)]
+    {
+        // SAFETY: plain libc calls on fds this process owns.
+        unsafe {
+            if libc::isatty(1) == 1 {
+                return;
+            }
+            let mut stat: libc::stat = std::mem::zeroed();
+            if libc::fstat(1, &mut stat) == 0 && (stat.st_mode & libc::S_IFMT) == libc::S_IFREG {
+                return;
+            }
+            let Ok(home) = std::env::var("HOME") else {
+                return;
+            };
+            let path = format!("{home}/Library/Logs/StealthPrompter.log");
+            let Some(dir) = std::path::Path::new(&path).parent() else {
+                return;
+            };
+            if std::fs::create_dir_all(dir).is_err() {
+                return;
+            }
+            let Ok(file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+            else {
+                return;
+            };
+            use std::os::unix::io::AsRawFd;
+            if libc::dup2(file.as_raw_fd(), 1) < 0 || libc::dup2(file.as_raw_fd(), 2) < 0 {
+                return;
+            }
+            println!("LOG_FILE {path}");
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    init_file_logging();
     tauri::Builder::default()
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -787,7 +909,8 @@ pub fn run() {
             script_lines,
             hud_state,
             input_probe,
-            drag_probe
+            drag_probe,
+            open_mic_settings
         ])
         .on_window_event(|window, event| {
             // Dragging and resizing fire continuously; just record the latest placement and
@@ -1018,6 +1141,11 @@ pub fn run() {
                     println!("WINDOW_GEOMETRY_SAVED x={} y={}", geo.x, geo.y);
                 }
             });
+
+            // Reported without prompting, so the state is visible in the log even before a
+            // session starts.
+            #[cfg(target_os = "macos")]
+            println!("MIC_PERMISSION startup_status={}", mic_permission::status().as_str());
 
             // Note: an accessory (agent) activation policy was measured against a genuinely
             // fullscreen Chrome and did NOT put the HUD on that Space either, so the app stays

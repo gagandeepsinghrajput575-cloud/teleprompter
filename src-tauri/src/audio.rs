@@ -230,6 +230,7 @@ pub fn replay_wav(
     path: &str,
     tx: UnboundedSender<Vec<i16>>,
     stop: Arc<AtomicBool>,
+    level: Arc<AtomicU32>,
 ) -> Result<CaptureStats, String> {
     let reader = hound::WavReader::open(path).map_err(|e| format!("cannot open {path}: {e}"))?;
     let spec = reader.spec();
@@ -273,9 +274,24 @@ pub fn replay_wav(
                 if tx.send(piece.to_vec()).is_err() {
                     break;
                 }
+                // Replay must publish a level too. Without this the meter sits at zero during
+                // Simulated Call Mode and the silence watchdog raises a false alarm.
+                let sum_sq: f64 = piece
+                    .iter()
+                    .map(|s| {
+                        let v = *s as f64 / 32768.0;
+                        v * v
+                    })
+                    .sum();
+                let rms = (sum_sq / piece.len().max(1) as f64).sqrt() as f32;
+                level.store(rms.to_bits(), Ordering::Relaxed);
                 std::thread::sleep(Duration::from_millis(100));
             }
             println!("REPLAY_FINISHED {path}");
+            // End-of-source sentinel: NaN means "no more audio", which is different from a
+            // silent-but-running source. The silence watchdog uses this to stop instead of
+            // raising a false alarm once the fixture or device has finished.
+            level.store(f32::NAN.to_bits(), Ordering::Relaxed);
         })
         .map_err(|e| format!("cannot spawn replay thread: {e}"))?;
 
@@ -285,7 +301,7 @@ pub fn replay_wav(
 #[cfg(test)]
 mod tests {
     use super::{Resampler, TARGET_RATE};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -350,7 +366,8 @@ mod tests {
         runtime.block_on(async {
             let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
             let stop = Arc::new(AtomicBool::new(false));
-            super::replay_wav(&path_str, tx, stop.clone()).expect("replay starts");
+            super::replay_wav(&path_str, tx, stop.clone(), Arc::new(AtomicU32::new(0)))
+                .expect("replay starts");
 
             // First chunk arrives, so the producer is definitely running.
             let first = tokio::time::timeout(Duration::from_secs(2), rx.recv()).await;

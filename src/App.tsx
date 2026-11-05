@@ -21,6 +21,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  const [devices, setDevices] = useState<string[]>([]);
+  const [device, setDevice] = useState<string | null>(() => localStorage.getItem("tp.device"));
 
   // Edit mode = click-through is off: the window is unlocked, draggable and clickable.
   useEffect(() => {
@@ -75,7 +77,7 @@ export default function App() {
     try {
       const info = await invoke<{ device: { device: string }; deepseek: boolean }>(
         "start_session",
-        { device: null }
+        { device }
       );
       setStatus({ running: true, message: `listening on ${info.device.device}` });
       if (!info.deepseek) setError("DeepSeek key missing: stage 2 disabled");
@@ -84,6 +86,21 @@ export default function App() {
     } finally {
       setBusy(false);
     }
+  }, [device]);
+
+  // Input devices. The default device is not always the one you are speaking into (a USB
+  // speakerphone or a virtual loopback can win), so it must be overridable.
+  useEffect(() => {
+    invoke<string[]>("list_devices")
+      .then((list) => setDevices(list))
+      .catch(() => undefined);
+  }, []);
+
+  const chooseDevice = useCallback((name: string) => {
+    const next = name === "" ? null : name;
+    setDevice(next);
+    if (next) localStorage.setItem("tp.device", next);
+    else localStorage.removeItem("tp.device");
   }, []);
 
   const stop = useCallback(async () => {
@@ -216,6 +233,23 @@ export default function App() {
         <div className="meter-fill" style={{ width: `${Math.min(100, level * 400)}%` }} />
       </div>
 
+      {/* The default input is not always the microphone you are speaking into. */}
+      {!status.running && devices.length > 0 && (
+        <select
+          className="picker"
+          value={device ?? ""}
+          onChange={(e) => chooseDevice(e.target.value)}
+          title="Microphone to listen to"
+        >
+          <option value="">System default</option>
+          {devices.map((name) => (
+            <option key={name} value={name}>
+              {name}
+            </option>
+          ))}
+        </select>
+      )}
+
       <div className="blocks">
         {script.lines.map((line, i) => {
           const state = line.id === activeId ? "active" : i < activeIndex ? "past" : "future";
@@ -252,7 +286,17 @@ export default function App() {
           {active.id}/{script.lines.length}
         </span>
       </div>
-      {error && <div className="error">{error}</div>}
+      {error && (
+        <div className="error">
+          <span>{error}</span>
+          {/* A denied microphone is permanent until changed in System Settings. */}
+          {/microphone access/i.test(error) && (
+            <button className="btn" onClick={() => invoke("open_mic_settings").catch(() => undefined)}>
+              Open Settings
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

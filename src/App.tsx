@@ -224,6 +224,16 @@ export default function App() {
         <span className="stage" data-stage={stageLabel.includes("2") ? "2" : "1"}>
           {stageLabel}
         </span>
+        {/* Click-through is silent by nature: every click goes to the window behind, so without
+            this the HUD simply looks broken. It is the most important label in the app. */}
+        {!editMode && (
+          <span
+            className="locked"
+            title="Click-through is ON: clicks pass to the app behind. Unlock with ⌘⇧⌥L or the menu bar item."
+          >
+            🔒 LOCKED
+          </span>
+        )}
         <button className="btn" onClick={status.running ? stop : start} disabled={busy}>
           {status.running ? "Stop" : "Start"}
         </button>

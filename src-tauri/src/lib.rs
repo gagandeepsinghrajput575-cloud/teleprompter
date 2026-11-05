@@ -61,8 +61,15 @@ fn refresh_tray() {
 }
 
 /// Cmd+Shift on every platform this app targets (macOS only today).
-fn cmd_shift() -> Modifiers {
-    Modifiers::SHIFT | Modifiers::SUPER
+/// Modifiers for every global shortcut: Cmd+Shift+Option.
+///
+/// The extra Option is deliberate. `Cmd+Shift+E` was used first and it is VS Code's file-explorer
+/// shortcut; because these are registered *globally* the app silently stole that combination and
+/// switched the HUD into click-through, which looks exactly like a broken app: clicks fall through
+/// to the window behind, and the user cannot drag or press Start. Three modifiers make an
+/// accidental collision far less likely.
+fn cmd_shift_opt() -> Modifiers {
+    Modifiers::SHIFT | Modifiers::SUPER | Modifiers::ALT
 }
 
 /// Live session state, owned by Tauri and shared with the async event loop.
@@ -728,15 +735,15 @@ fn nudge_from_hotkey(app: &tauri::AppHandle, delta: i32) {
 /// deliberate set — every one of them steals the combination from every other app.
 fn register_hotkeys(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let shortcuts = [
-        Shortcut::new(Some(cmd_shift()), Code::KeyH),
-        Shortcut::new(Some(cmd_shift()), Code::KeyE),
-        Shortcut::new(Some(cmd_shift()), Code::ArrowUp),
-        Shortcut::new(Some(cmd_shift()), Code::ArrowDown),
+        Shortcut::new(Some(cmd_shift_opt()), Code::KeyH),
+        Shortcut::new(Some(cmd_shift_opt()), Code::KeyL),
+        Shortcut::new(Some(cmd_shift_opt()), Code::ArrowUp),
+        Shortcut::new(Some(cmd_shift_opt()), Code::ArrowDown),
     ];
     app.global_shortcut()
         .register_multiple(shortcuts)
         .map_err(|err| Box::<dyn std::error::Error>::from(err.to_string()))?;
-    println!("HOTKEYS registered cmd+shift+H hide, +E edit mode, +Up/+Down nudge");
+    println!("HOTKEYS registered cmd+shift+opt H hide, L lock/unlock, Up/Down nudge");
     Ok(())
 }
 
@@ -883,12 +890,12 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
-                    if event.state() != ShortcutState::Pressed || shortcut.mods != cmd_shift() {
+                    if event.state() != ShortcutState::Pressed || shortcut.mods != cmd_shift_opt() {
                         return;
                     }
                     match shortcut.key {
                         Code::KeyH => toggle_visibility(app),
-                        Code::KeyE => toggle_edit_mode(app),
+                        Code::KeyL => toggle_edit_mode(app),
                         Code::ArrowUp => nudge_from_hotkey(app, -1),
                         Code::ArrowDown => nudge_from_hotkey(app, 1),
                         _ => {}
@@ -1174,7 +1181,7 @@ pub fn run() {
                 let edit = MenuItem::with_id(
                     app,
                     "edit",
-                    "Unlock / Lock HUD (edit mode)",
+                    "Unlock / Lock HUD  (\u{2318}\u{21e7}\u{2325}L)",
                     true,
                     None::<&str>,
                 )?;

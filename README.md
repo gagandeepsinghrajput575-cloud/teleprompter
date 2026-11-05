@@ -230,9 +230,15 @@ with a grab bar.
 
 | Action | How |
 |---|---|
-| Lock (click-through, for a real call) | `Cmd+Shift+E` or the menu bar item |
-| Show / hide | `Cmd+Shift+H` or the menu bar item |
-| Previous / next line | `Cmd+Shift+↑` / `Cmd+Shift+↓`, arrow keys, or the menu bar |
+| Lock (click-through, for a real call) | `⌘⇧⌥L` or the menu bar item |
+| Show / hide | `⌘⇧⌥H` or the menu bar item |
+| Previous / next line | `⌘⇧⌥↑` / `⌘⇧⌥↓`, arrow keys, or the menu bar |
+
+Three modifiers deliberately. These shortcuts are registered **globally**, so a two-modifier
+combination is stolen from every other app. `Cmd+Shift+E` was the original lock key and it is VS
+Code's file-explorer shortcut, which meant using VS Code silently locked the HUD into click-through
+— indistinguishable from a broken app. When locked, the HUD shows a **🔒 LOCKED** badge so the state
+is visible even though clicks pass through.
 | Drag | anywhere on the card while unlocked |
 
 The menu bar title shows the current state — `🔒` locked, `🔓` unlocked, with `⚠️` appended when the

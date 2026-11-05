@@ -290,6 +290,21 @@ body {
   font-size: 9px;
 }
 
+/* Locked = click-through. Must be impossible to miss, because the symptom is
+   "nothing I click works" rather than anything that looks like a state. */
+.locked {
+  flex: 0 0 auto;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: #ffd479;
+  background: rgba(255, 212, 121, 0.14);
+  border: 1px solid rgba(255, 212, 121, 0.4);
+  border-radius: 3px;
+  padding: 0 4px;
+  white-space: nowrap;
+}
+
 /* Microphone picker: only shown while stopped. */
 .picker {
   width: 100%;

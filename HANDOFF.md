@@ -78,6 +78,16 @@ cd .. && npm run typecheck && npm run test && npm run build
 Window is **resizable (min 260×220)**. A click-through window cannot be resized — unlock with
 ⌘⇧⌥L first. Size persists across launches.
 
+### Bare 1–0 keys (no Control)
+`1`–`9`/`0` can fire the battlecards directly, with no modifier. This is an **Accessibility event
+tap** (`src-tauri/src/bare_keys.m` + `bare_keys.rs`), not a global shortcut, precisely so it can be
+conditional: a digit is handled **only** when the mode is armed **and** a microphone session is
+listening — and it is then swallowed, so it is never typed into the dialer. Idle typing, other
+apps and any modified key (⌘1, ⌃C, …) pass straight through.
+Needs **Accessibility** permission; ad-hoc signing re-asks after each rebuild. Toggle in the HUD
+(`1–0 Bare keys` row, with a `settings` link to that exact pane). Commands:
+`bare_keys_start`, `bare_keys_stop`, `bare_keys_armed`.
+
 ## Scripts & objections
 - Fixtures: `call1_audit_script.json` (31 lines), `call2_sales_script.json` (24),
   `coldcall_scalix.json` (**12-line centre flow only**).
@@ -154,6 +164,8 @@ Speech tasks are unproven across long calls. Per-app Core Audio process taps are
    `TELEPROMPTER_SCRIPT` accordingly.
 9. **Teleprompter repo not pushed** (public repo + proprietary scripts). Dialer integration pushed;
    later notify commit is local.
+10. **Bare-digit tap needs Accessibility** (ad-hoc signing re-asks after every rebuild). While armed
+    *and* listening, digits are swallowed by design; toggle it off to type numbers normally.
 
 ## Next steps (priority order)
 1. Migrate the Apple engine to **SpeechAnalyzer/SpeechTranscriber** (Swift bridge compiled via

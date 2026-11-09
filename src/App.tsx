@@ -92,6 +92,9 @@ export default function App() {
   // Selects the prospect's audio (the dialer call) and the note the backend reports for it.
   const [prospectAudio, setProspectAudio] = useState(false);
   const [prospectNote, setProspectNote] = useState("");
+  // Bare 1-9/0 battlecard keys (Accessibility tap; only active while listening).
+  const [bareKeys, setBareKeys] = useState(false);
+  const [bareNote, setBareNote] = useState("");
   const [prospect, setProspect] = useState<{ name: string; company: string; niche: string }>(() => {
     try {
       const raw = localStorage.getItem("tp.prospect");
@@ -133,6 +136,13 @@ export default function App() {
     return () => {
       un.then((off) => off());
     };
+  }, []);
+
+  // Reflect the tap state in case it was armed before this view mounted.
+  useEffect(() => {
+    invoke<boolean>("bare_keys_armed")
+      .then(setBareKeys)
+      .catch(() => undefined);
   }, []);
 
   // The local Pulse Dialer pushes the prospect's context over a loopback webhook when a call
@@ -297,6 +307,24 @@ export default function App() {
       setProspectNote(String(e));
     }
   }, [prospectAudio]);
+
+  // Bare digits: pressing 1-9/0 shows the matching battlecard with no Control key. The backend
+  // only swallows digits while a microphone session is listening, so typing elsewhere is safe.
+  const toggleBareKeys = useCallback(async () => {
+    if (bareKeys) {
+      await invoke("bare_keys_stop").catch(() => undefined);
+      setBareKeys(false);
+      setBareNote("bare 1-0 off");
+      return;
+    }
+    try {
+      await invoke("bare_keys_start");
+      setBareKeys(true);
+      setBareNote("bare 1-0 on — active while listening");
+    } catch (e) {
+      setBareNote(String(e));
+    }
+  }, [bareKeys]);
 
   // Input devices list.
   useEffect(() => {
@@ -660,6 +688,28 @@ export default function App() {
             )}
           </div>
           {prospectAudio && <ProspectEcho />}
+
+          <div className="prospect-row">
+            <button
+              type="button"
+              className={`prospect-toggle ${bareKeys ? "on" : ""}`}
+              onClick={toggleBareKeys}
+              title="Press 1-9/0 for battlecards without Control (needs Accessibility; only while listening)"
+            >
+              {bareKeys ? "1–0 Bare keys ON" : "1–0 Bare keys OFF"}
+            </button>
+            {bareNote && <span className="prospect-note">{bareNote}</span>}
+            {!bareKeys && (
+              <button
+                type="button"
+                className="prospect-settings"
+                onClick={() => invoke("open_accessibility_settings").catch(() => undefined)}
+                title="Open Accessibility settings"
+              >
+                settings
+              </button>
+            )}
+          </div>
 
           <div className="blocks" ref={blocksRef}>
             {script.lines.map((line, i) => {

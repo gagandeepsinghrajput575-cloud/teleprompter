@@ -4,9 +4,11 @@ fn main() {
         println!("cargo:rerun-if-changed=src/apple_speech.m");
         println!("cargo:rerun-if-changed=src/apple_speech.h");
         println!("cargo:rerun-if-changed=src/system_audio.m");
+        println!("cargo:rerun-if-changed=src/bare_keys.m");
         cc::Build::new()
             .file("src/apple_speech.m")
             .file("src/system_audio.m")
+            .file("src/bare_keys.m")
             .flag("-fobjc-arc")
             .flag("-fblocks")
             .flag("-Wno-unguarded-availability-new")
@@ -22,6 +24,9 @@ fn main() {
         println!("cargo:rustc-link-lib=framework=CoreMedia");
         println!("cargo:rustc-link-lib=framework=CoreAudio");
         println!("cargo:rustc-link-lib=framework=CoreFoundation");
+        // Bare-digit event tap (CGEventTap / Accessibility).
+        println!("cargo:rustc-link-lib=framework=ApplicationServices");
+        println!("cargo:rustc-link-lib=framework=CoreGraphics");
     }
     tauri_build::build();
 }

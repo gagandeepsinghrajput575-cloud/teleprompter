@@ -9,6 +9,7 @@ use tokio::sync::mpsc;
 #[cfg(target_os = "macos")]
 mod apple_stt;
 mod audio;
+mod bare_keys;
 mod keys;
 #[cfg(target_os = "macos")]
 mod mic_permission;
@@ -322,6 +323,10 @@ const SPEECH_SETTINGS_URL: &str =
 const SCREEN_SETTINGS_URL: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
 
+/// `open` target for Accessibility, which the bare 1–0 key tap needs.
+const ACCESSIBILITY_SETTINGS_URL: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+
 /// Sends the user straight to the permission they need. A denial is permanent until they change
 /// it there, so telling them without a way to act on it is not enough.
 #[tauri::command]
@@ -354,6 +359,17 @@ fn open_screen_settings() {
     {
         Ok(_) => println!("SCREEN_PERMISSION opened settings"),
         Err(err) => eprintln!("SCREEN_PERMISSION_ERROR cannot open settings: {err}"),
+    }
+}
+
+#[tauri::command]
+fn open_accessibility_settings() {
+    match std::process::Command::new("open")
+        .arg(ACCESSIBILITY_SETTINGS_URL)
+        .status()
+    {
+        Ok(_) => println!("ACCESSIBILITY_PERMISSION opened settings"),
+        Err(err) => eprintln!("ACCESSIBILITY_PERMISSION_ERROR cannot open settings: {err}"),
     }
 }
 
@@ -738,6 +754,10 @@ fn begin_session(
         ),
     );
 
+    // From here on bare digits belong to the battlecards (the tap still requires the user to
+    // have armed the mode; otherwise every keystroke passes through).
+    bare_keys::set_listening(true);
+
     Ok(SessionInfo {
         device: stats,
         engine: engine_mode,
@@ -767,6 +787,7 @@ fn end_session(app: &tauri::AppHandle) {
     // Dropping the last remaining sender closes the audio channel, which makes the STT
     // task send CloseStream and return.
     state.audio_tx.lock().unwrap().take();
+    bare_keys::set_listening(false);
     emit_status(app, false, "stopped");
 }
 
@@ -875,6 +896,25 @@ fn system_audio_stop() -> Result<(), String> {
     PROSPECT_AUDIO_RUNNING.store(false, Ordering::SeqCst);
     system_audio::stop();
     Ok(())
+}
+
+/// Arm bare 1–9 / 0 as objection triggers. Digits are only swallowed while a session is
+/// listening, so idle typing and numbers in other apps are unaffected.
+#[tauri::command]
+fn bare_keys_start(app: tauri::AppHandle) -> Result<(), String> {
+    bare_keys::attach(app);
+    bare_keys::start()
+}
+
+#[tauri::command]
+fn bare_keys_stop() -> Result<(), String> {
+    bare_keys::stop();
+    Ok(())
+}
+
+#[tauri::command]
+fn bare_keys_armed() -> bool {
+    bare_keys::is_armed()
 }
 
 #[tauri::command]
@@ -1241,6 +1281,10 @@ pub fn run() {
             open_mic_settings,
             open_speech_settings,
             open_screen_settings,
+            open_accessibility_settings,
+            bare_keys_start,
+            bare_keys_stop,
+            bare_keys_armed,
             system_audio_start,
             system_audio_stop,
             call_context

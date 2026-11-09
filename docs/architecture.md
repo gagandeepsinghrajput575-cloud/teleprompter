@@ -15,7 +15,7 @@ Deepgram Nova-3 WebSocket          ← KeepAlive every 3–5s or the socket dies
 Tracker (Rust)
     S0 gate        no new speech → do nothing
     S1 local match ~5–15 ms, offline, free; candidate window = active ± 3 blocks
-    S2 deepseek-flash  only on ambiguity; thinking disabled; 800 ms timeout
+    S2 Jev (TypeSafe)  only on ambiguity; typed choice + confidence; 900 ms timeout
     │ hysteresis + monotonic forward bias
     ▼
 HUD (React)                        ← dumb renderer; receives active_id + cues only
@@ -30,8 +30,9 @@ Most blocks are unambiguous, so a cheap local match settles them in ~10 ms. The 
 for genuine ambiguity. The consequences are: faster switches, ~80% fewer API calls, and the HUD
 keeps working when the network or the model fails.
 
-Prompt ordering is deliberate: static script JSON first, volatile `active_id` + buffer last, so
-DeepSeek's prefix cache hits (50× cheaper and lower latency).
+Stage 2 is a single Jev **Choice** question, not a chat prompt: the candidate lines become the
+option `criteria`, so there is no free-form JSON to parse and no prefix-cache tuning to do. Jev
+bills input tokens only, so an extra decision is cheap.
 
 ## Honest latency budget
 
@@ -41,7 +42,7 @@ Detection is **not** sub-250 ms. Realistic total from words spoken to highlight 
 |---|---|
 | Deepgram interim | 300–500 ms |
 | Debounce (6 words or 800 ms pause) | 1000–2400 ms |
-| DeepSeek round-trip (non-thinking) | 300–700 ms |
+| Jev decision round-trip | 200–500 ms |
 
 Asserted budget: **p50 < 1.5 s, p95 < 2.5 s**. Perceptual speed comes from always rendering the
 next block at low opacity plus a forward bias, not from pretending the pipeline is instant.

@@ -46,7 +46,8 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "signingIdentity": "StealthPrompter Local Signing",
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist",
       "minimumSystemVersion": "11.0"
     }
   }

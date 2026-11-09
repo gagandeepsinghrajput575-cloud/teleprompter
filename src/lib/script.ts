@@ -35,12 +35,14 @@ export type Script = {
  * `[Name]` placeholder, which must survive into the spoken text.
  */
 export function classifyToken(token: string): Annotation[] | null {
-  const pause = token.match(/^[\s\u23F8\uFE0F]*([0-9]*\.?[0-9]+)\s*s\s*$/i);
-  if (pause) {
-    const seconds = Number.parseFloat(pause[1]);
+  const pauseMatch = token.match(/([0-9]*\.?[0-9]+)\s*s\b/i);
+  if (pauseMatch) {
+    const seconds = Number.parseFloat(pauseMatch[1]);
     if (Number.isFinite(seconds)) {
       return [{ kind: "pause", ms: Math.round(seconds * 1000) }];
     }
+  } else if (/PAUSE/i.test(token)) {
+    return [{ kind: "pause", ms: 3000 }];
   }
 
   const normalised = token
@@ -49,22 +51,21 @@ export function classifyToken(token: string): Annotation[] | null {
     .trim()
     .toUpperCase();
 
-  switch (normalised) {
-    case "DOWN":
-      return [{ kind: "tone", value: "down" }];
-    case "SLOW & LOW":
-    case "SLOW AND LOW":
-      return [
-        { kind: "pace", value: "slow" },
-        { kind: "tone", value: "down" },
-      ];
-    case "PACE UP":
-      return [{ kind: "pace", value: "fast" }];
-    case "CURIOUS":
-      return [{ kind: "tone", value: "up" }];
-    default:
-      return null;
+  const annotations: Annotation[] = [];
+
+  if (normalised.includes("SLOW & LOW") || normalised.includes("SLOW AND LOW")) {
+    annotations.push({ kind: "pace", value: "slow" }, { kind: "tone", value: "down" });
+  } else if (normalised.includes("PACE UP")) {
+    annotations.push({ kind: "pace", value: "fast" });
   }
+
+  if (normalised.includes("DOWN") && !normalised.includes("SLOW")) {
+    annotations.push({ kind: "tone", value: "down" });
+  } else if (normalised.includes("CURIOUS")) {
+    annotations.push({ kind: "tone", value: "up" });
+  }
+
+  return annotations.length > 0 ? annotations : null;
 }
 
 function applyAnnotation(cue: Cue, annotation: Annotation): void {
@@ -118,7 +119,15 @@ export function loadScript(raw: RawScript): Script {
     ...raw,
     lines: raw.lines.map((line) => {
       const { body, cue, annotations } = parseAnnotations(line.raw);
-      return { ...line, body, cue, annotations };
+      return {
+        id: line.id,
+        phase: line.phase,
+        label: line.label,
+        raw: line.raw,
+        body,
+        cue,
+        annotations,
+      };
     }),
   };
 }

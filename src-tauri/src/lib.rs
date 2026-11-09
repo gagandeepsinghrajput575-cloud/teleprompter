@@ -6,6 +6,8 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tokio::sync::mpsc;
 
+#[cfg(target_os = "macos")]
+mod apple_stt;
 mod audio;
 mod keys;
 #[cfg(target_os = "macos")]
@@ -15,6 +17,8 @@ mod tracker;
 
 #[cfg(target_os = "macos")]
 mod overlay_macos;
+
+mod context_server;
 
 use tracker::Tracker;
 
@@ -106,8 +110,9 @@ struct StatusEvent {
 #[derive(serde::Serialize)]
 struct SessionInfo {
     device: audio::CaptureStats,
+    engine: String,
     deepgram: bool,
-    deepseek: bool,
+    jev: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -307,6 +312,10 @@ fn drag_probe(mode: String, detail: String) {
 const MIC_SETTINGS_URL: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone";
 
+/// `open` target for the Speech Recognition pane in System Settings.
+const SPEECH_SETTINGS_URL: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition";
+
 /// Sends the user straight to the permission they need. A denial is permanent until they change
 /// it there, so telling them without a way to act on it is not enough.
 #[tauri::command]
@@ -317,6 +326,17 @@ fn open_mic_settings() {
     {
         Ok(_) => println!("MIC_PERMISSION opened settings"),
         Err(err) => eprintln!("MIC_PERMISSION_ERROR cannot open settings: {err}"),
+    }
+}
+
+#[tauri::command]
+fn open_speech_settings() {
+    match std::process::Command::new("open")
+        .arg(SPEECH_SETTINGS_URL)
+        .status()
+    {
+        Ok(_) => println!("SPEECH_PERMISSION opened settings"),
+        Err(err) => eprintln!("SPEECH_PERMISSION_ERROR cannot open settings: {err}"),
     }
 }
 
@@ -398,20 +418,37 @@ fn spawn_capture(
 
 /// Starts a session. Kept separate from the command so the app can also autostart
 /// headlessly during verification (`STEALTH_AUTOSTART=1`).
-fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<SessionInfo, String> {
+fn begin_session(
+    app: &tauri::AppHandle,
+    device: Option<String>,
+    engine: Option<String>,
+) -> Result<SessionInfo, String> {
     let state = app.state::<AppState>();
 
     if state.audio_tx.lock().unwrap().is_some() {
         return Err("a session is already running".to_string());
     }
 
-    let deepgram =
-        keys::get("DEEPGRAM_API_KEY").ok_or("DEEPGRAM_API_KEY not found in env or Keychain")?;
-    let deepseek = keys::get("DEEPSEEK_API_KEY");
+    let engine_mode = engine.as_deref().unwrap_or("apple").to_lowercase();
+    let is_apple = engine_mode == "apple";
+
+    let deepgram_key = keys::get("DEEPGRAM_API_KEY");
+    // Jev (TypeSafe "System One") is reached through OpenRouter, so the key is an OpenRouter
+    // key. Accept either name so the docs' `OPENROUTER_API_KEY` and a `JEV_API_KEY` both work.
+    let jev_key = keys::get("JEV_API_KEY").or_else(|| keys::get("OPENROUTER_API_KEY"));
+
+    if !is_apple && deepgram_key.is_none() {
+        return Err("DEEPGRAM_API_KEY not found in env or Keychain".to_string());
+    }
+
     println!(
-        "KEYS deepgram={} deepseek={}",
-        keys::mask(&deepgram),
-        deepseek
+        "KEYS engine={} deepgram={} jev={}",
+        engine_mode,
+        deepgram_key
+            .as_deref()
+            .map(keys::mask)
+            .unwrap_or_else(|| "none".to_string()),
+        jev_key
             .as_deref()
             .map(keys::mask)
             .unwrap_or_else(|| "missing".to_string())
@@ -421,7 +458,7 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
     *state.stop.lock().unwrap() = Some(stop.clone());
 
     let (audio_tx, audio_rx) = mpsc::unbounded_channel();
-    // Simulated Call Mode: replay a 16 kHz mono WAV through the real Deepgram socket.
+    // Simulated Call Mode: replay a 16 kHz mono WAV through the pipeline.
     let stats = match std::env::var("STEALTH_SIMULATE_WAV") {
         Ok(path) if !path.trim().is_empty() => {
             audio::replay_wav(&path, audio_tx.clone(), stop.clone(), state.level.clone())?
@@ -436,9 +473,27 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
     *state.audio_tx.lock().unwrap() = Some(audio_tx);
 
     let (stt_tx, mut stt_rx) = mpsc::unbounded_channel();
-    tauri::async_runtime::spawn(async move {
-        stt::run(deepgram, audio_rx, stt_tx).await;
-    });
+    if is_apple {
+        #[cfg(target_os = "macos")]
+        {
+            let stop_flag = stop.clone();
+            tauri::async_runtime::spawn(async move {
+                apple_stt::run(audio_rx, stt_tx, stop_flag).await;
+            });
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let dg = deepgram_key.unwrap_or_default();
+            tauri::async_runtime::spawn(async move {
+                stt::run(dg, audio_rx, stt_tx).await;
+            });
+        }
+    } else {
+        let dg = deepgram_key.unwrap_or_default();
+        tauri::async_runtime::spawn(async move {
+            stt::run(dg, audio_rx, stt_tx).await;
+        });
+    }
 
     // Silence watchdog. Any cause — permission, a muted device, the wrong input, a hardware
     // mute switch — looks identical from here: a stream that produces zeros. Rather than sit
@@ -495,7 +550,7 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
 
     let tracker_arc = state.tracker.clone();
     let http = state.http.clone();
-    let llm_key = deepseek.clone();
+    let llm_key = jev_key.clone();
     let app_handle: tauri::AppHandle = (*app).clone();
 
     tauri::async_runtime::spawn(async move {
@@ -505,10 +560,12 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
             let transcript = match event {
                 stt::SttEvent::Connected => {
                     println!("STT_READY");
+                    emit_status(&app_handle, true, "listening");
                     continue;
                 }
                 stt::SttEvent::Error(err) => {
                     eprintln!("STT_EVENT_ERROR {err}");
+                    emit_status(&app_handle, false, format!("STT: {err}"));
                     continue;
                 }
                 stt::SttEvent::Transcript(t) => t,
@@ -516,18 +573,33 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
 
             let _ = app_handle.emit("transcript", &transcript);
 
-            // Stage 0: interims count too. Waiting for Deepgram to finalize the sentence is
-            // exactly what made the highlight arrive when the line was mostly already spoken.
+            let mut committed: Option<(i32, &'static str)> = None;
+
             let plan = {
                 let mut tr = tracker_arc.lock().unwrap();
                 if transcript.is_final {
                     println!("STT_FINAL \"{}\"", transcript.text);
-                    tr.push_text(&transcript.text);
+                    // Check if current line finished on this finalized utterance:
+                    if let Some(next_id) = tr.on_utterance_final(&transcript.text) {
+                        committed = Some((next_id, "line-completed"));
+                    } else {
+                        tr.push_text(&transcript.text);
+                    }
                     tr.clear_partial();
                 } else {
                     tr.set_partial(&transcript.text);
+                    // Advance the instant the whole active line has been spoken, instead of
+                    // waiting for the ~700ms silence final. Strict enough that it never fires on
+                    // a partial line (see `active_line_spoken_out`).
+                    if tr.active_line_spoken_out() {
+                        if let Some(next_id) = tr.complete_active() {
+                            committed = Some((next_id, "line-spoken"));
+                        }
+                    }
                 }
-                if tr.should_run_cycle() {
+                if committed.is_some() {
+                    None
+                } else if tr.should_run_cycle() {
                     tr.mark_cycle_ran();
                     Some((
                         tr.local_match(),
@@ -539,11 +611,15 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
                     None
                 }
             };
+
+            if let Some((id, reason)) = committed {
+                emit_active(&app_handle, &tracker_arc, id, reason);
+                continue;
+            }
+
             let Some((local, buffer, active, candidates)) = plan else {
                 continue;
             };
-
-            let mut committed: Option<(i32, &'static str)> = None;
 
             if tracker::needs_llm(local) {
                 // Stage 2: stage 1 was unsure — a paraphrase, off-script speech, or ambiguity.
@@ -560,39 +636,52 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
                     if llm_failures < 3 && llm_ready {
                         last_llm = Some(std::time::Instant::now());
                         println!(
-                            "TRACKER_ROUTE stage2-llm active={active} buffer_words={}",
+                            "TRACKER_ROUTE stage2-jev active={active} buffer_words={}",
                             buffer.split_whitespace().count()
                         );
                         match tracker::classify_with_llm(&http, key, &candidates, active, &buffer)
                             .await
                         {
-                            Ok(id) => {
+                            Ok(Some(id)) => {
                                 llm_failures = 0;
                                 proposal = Some(id);
                                 decided_by_llm = true;
-                                println!("TRACKER_LLM_OK active={id}");
+                                println!("TRACKER_JEV_OK active={id}");
+                            }
+                            Ok(None) => {
+                                // Jev answered but below the confidence floor: hold position.
+                                llm_failures = 0;
+                                println!("TRACKER_JEV_UNSURE active={active}");
                             }
                             Err(err) => {
                                 llm_failures += 1;
-                                eprintln!("TRACKER_LLM_ERROR n={llm_failures} {err}");
+                                eprintln!("TRACKER_JEV_ERROR n={llm_failures} {err}");
                             }
                         }
                     } else {
                         println!("TRACKER_ROUTE stage1-local (llm throttled or circuit open)");
                     }
                 } else {
-                    println!("TRACKER_ROUTE stage1-local (no deepseek key)");
+                    println!("TRACKER_ROUTE stage1-local (no jev key)");
                 }
                 if let Some(id) = proposal {
-                    if let Some(new_id) = tracker_arc.lock().unwrap().consider(id, false) {
-                        committed = Some((
-                            new_id,
-                            if decided_by_llm {
-                                "stage2-llm"
-                            } else {
-                                "stage1-local"
-                            },
-                        ));
+                    // Restrict LLM proposals to immediate forward candidates (active + 1 .. active + 3)
+                    // so an LLM hallucination cannot jump to random distant lines:
+                    if id > active && id <= active + 3 {
+                        if let Some(new_id) = tracker_arc.lock().unwrap().consider(id, false) {
+                            committed = Some((
+                                new_id,
+                                if decided_by_llm {
+                                    "stage2-jev"
+                                } else {
+                                    "stage1-local"
+                                },
+                            ));
+                        }
+                    } else {
+                        println!(
+                            "TRACKER_RETAIN active={active} reason=llm-out-of-bounds proposed={id}"
+                        );
                     }
                 } else {
                     // Ambiguous or off-script and no model verdict: hold position.
@@ -615,12 +704,25 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
         println!("SESSION_LOOP_ENDED");
     });
 
-    emit_status(app, true, format!("listening on {}", stats.device));
+    emit_status(
+        app,
+        true,
+        format!(
+            "listening on {} ({})",
+            stats.device,
+            if is_apple {
+                "Apple Neural Engine"
+            } else {
+                "Deepgram Nova-3"
+            }
+        ),
+    );
 
     Ok(SessionInfo {
         device: stats,
-        deepgram: true,
-        deepseek: deepseek.is_some(),
+        engine: engine_mode,
+        deepgram: !is_apple,
+        jev: jev_key.is_some(),
     })
 }
 
@@ -628,8 +730,9 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
 async fn start_session(
     app: tauri::AppHandle,
     device: Option<String>,
+    engine: Option<String>,
 ) -> Result<SessionInfo, String> {
-    begin_session(&app, device)
+    begin_session(&app, device, engine)
 }
 
 /// Ends a session. Shared by the command and the headless autostop hook so the loop
@@ -662,7 +765,8 @@ fn list_devices() -> Result<Vec<String>, String> {
 fn key_status() -> Vec<keys::KeyStatus> {
     vec![
         keys::status("DEEPGRAM_API_KEY"),
-        keys::status("DEEPSEEK_API_KEY"),
+        keys::status("JEV_API_KEY"),
+        keys::status("OPENROUTER_API_KEY"),
     ]
 }
 
@@ -686,6 +790,25 @@ fn audio_level(state: tauri::State<'_, AppState>) -> f32 {
 #[tauri::command]
 fn script_lines(state: tauri::State<'_, AppState>) -> Vec<tracker::ScriptLine> {
     state.tracker.lock().unwrap().lines().to_vec()
+}
+
+#[tauri::command]
+fn select_script(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    call_type: String,
+) -> Result<Vec<tracker::ScriptLine>, String> {
+    let script = tracker::load_script_by_type(&call_type)?;
+    let lines = script.lines.clone();
+    let id = state.tracker.lock().unwrap().switch_script(lines.clone());
+    emit_active(&app, &state.tracker, id, "script-select");
+    let _ = app.emit("script_selected", &call_type);
+    println!(
+        "SCRIPT_SWITCHED to '{}' lines={}",
+        script.title,
+        lines.len()
+    );
+    Ok(lines)
 }
 
 fn toggle_visibility(app: &tauri::AppHandle) {
@@ -731,19 +854,72 @@ fn nudge_from_hotkey(app: &tauri::AppHandle, delta: i32) {
     emit_active(app, &state.tracker, id, "manual-hotkey");
 }
 
+fn phase_from_hotkey(app: &tauri::AppHandle, delta: i32) {
+    let state = app.state::<AppState>();
+    let id = state.tracker.lock().unwrap().jump_phase(delta);
+    println!("HOTKEY phase delta={delta} active={id}");
+    emit_active(app, &state.tracker, id, "manual-phase");
+}
+
+fn reanchor_from_hotkey(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    let id = state.tracker.lock().unwrap().reanchor();
+    println!("HOTKEY reanchor active={id}");
+    emit_active(app, &state.tracker, id, "manual-reanchor");
+}
+
+/// Maps a digit key (top row or numpad) to the objection battlecard index 0-9.
+fn digit_index(key: Code) -> Option<u8> {
+    Some(match key {
+        Code::Digit1 | Code::Numpad1 => 1,
+        Code::Digit2 | Code::Numpad2 => 2,
+        Code::Digit3 | Code::Numpad3 => 3,
+        Code::Digit4 | Code::Numpad4 => 4,
+        Code::Digit5 | Code::Numpad5 => 5,
+        Code::Digit6 | Code::Numpad6 => 6,
+        Code::Digit7 | Code::Numpad7 => 7,
+        Code::Digit8 | Code::Numpad8 => 8,
+        Code::Digit9 | Code::Numpad9 => 9,
+        Code::Digit0 | Code::Numpad0 => 0,
+        _ => return None,
+    })
+}
+
 /// Registers the global shortcuts. These are process-wide, so they must stay a small,
 /// deliberate set — every one of them steals the combination from every other app.
 fn register_hotkeys(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    let shortcuts = [
+    let mut shortcuts = vec![
         Shortcut::new(Some(cmd_shift_opt()), Code::KeyH),
         Shortcut::new(Some(cmd_shift_opt()), Code::KeyL),
+        Shortcut::new(Some(cmd_shift_opt()), Code::ArrowLeft),
+        Shortcut::new(Some(cmd_shift_opt()), Code::ArrowRight),
         Shortcut::new(Some(cmd_shift_opt()), Code::ArrowUp),
         Shortcut::new(Some(cmd_shift_opt()), Code::ArrowDown),
+        Shortcut::new(Some(cmd_shift_opt()), Code::KeyR),
+        Shortcut::new(Some(cmd_shift_opt()), Code::KeyD),
     ];
+    // Control + digit = objection battlecards. Control+arrows are avoided because macOS binds
+    // them to Mission Control / Spaces.
+    for key in [
+        Code::Digit1,
+        Code::Digit2,
+        Code::Digit3,
+        Code::Digit4,
+        Code::Digit5,
+        Code::Digit6,
+        Code::Digit7,
+        Code::Digit8,
+        Code::Digit9,
+        Code::Digit0,
+    ] {
+        shortcuts.push(Shortcut::new(Some(Modifiers::CONTROL), key));
+    }
     app.global_shortcut()
         .register_multiple(shortcuts)
         .map_err(|err| Box::<dyn std::error::Error>::from(err.to_string()))?;
-    println!("HOTKEYS registered cmd+shift+opt H hide, L lock/unlock, Up/Down nudge");
+    println!(
+        "HOTKEYS registered cmd+shift+opt H/L/←/→/↑/↓/R nudge+phase+reanchor, ctrl+0-9 objections"
+    );
     Ok(())
 }
 
@@ -883,6 +1059,12 @@ fn init_file_logging() {
     }
 }
 
+/// Returns the most recent dialer-pushed context, so a late-mounting UI can still fetch it.
+#[tauri::command]
+fn call_context() -> Option<context_server::CallContext> {
+    context_server::current()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_file_logging();
@@ -890,15 +1072,32 @@ pub fn run() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, shortcut, event| {
-                    if event.state() != ShortcutState::Pressed || shortcut.mods != cmd_shift_opt() {
+                    if event.state() != ShortcutState::Pressed {
                         return;
                     }
-                    match shortcut.key {
-                        Code::KeyH => toggle_visibility(app),
-                        Code::KeyL => toggle_edit_mode(app),
-                        Code::ArrowUp => nudge_from_hotkey(app, -1),
-                        Code::ArrowDown => nudge_from_hotkey(app, 1),
-                        _ => {}
+                    if shortcut.mods == cmd_shift_opt() {
+                        match shortcut.key {
+                            Code::KeyH => toggle_visibility(app),
+                            Code::KeyL => toggle_edit_mode(app),
+                            Code::ArrowLeft => nudge_from_hotkey(app, -1),
+                            Code::ArrowRight => nudge_from_hotkey(app, 1),
+                            Code::ArrowUp => phase_from_hotkey(app, -1),
+                            Code::ArrowDown => phase_from_hotkey(app, 1),
+                            Code::KeyR => reanchor_from_hotkey(app),
+                            Code::KeyD => {
+                                let _ = app.emit("objection_dismiss", ());
+                                println!("HOTKEY objection dismiss");
+                            }
+                            _ => {}
+                        }
+                        return;
+                    }
+                    // Control + digit = objection battlecard (overlay only, never moves the script).
+                    if shortcut.mods == Modifiers::CONTROL {
+                        if let Some(index) = digit_index(shortcut.key) {
+                            let _ = app.emit("objection", index);
+                            println!("HOTKEY objection index={index}");
+                        }
                     }
                 })
                 .build(),
@@ -914,10 +1113,13 @@ pub fn run() {
             nudge,
             audio_level,
             script_lines,
+            select_script,
             hud_state,
             input_probe,
             drag_probe,
-            open_mic_settings
+            open_mic_settings,
+            open_speech_settings,
+            call_context
         ])
         .on_window_event(|window, event| {
             // Dragging and resizing fire continuously; just record the latest placement and
@@ -1217,12 +1419,16 @@ pub fn run() {
                 eprintln!("HOTKEY_ERROR registration failed: {err}");
             }
 
+            // Loopback webhook so the local dialer (Pulse Dialer) can push the prospect's
+            // name/company/niche when a call starts. Non-fatal if the port is unavailable.
+            context_server::spawn(app.handle().clone());
+
             // Headless verification hook: start without a human clicking Start.
             if std::env::var("STEALTH_AUTOSTART").is_ok() {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_millis(1200));
-                    match begin_session(&handle, None) {
+                    match begin_session(&handle, None, None) {
                         Ok(info) => println!("AUTOSTART_OK device={}", info.device.device),
                         Err(err) => eprintln!("AUTOSTART_FAILED {err}"),
                     }

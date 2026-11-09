@@ -34,7 +34,9 @@ pub enum SttEvent {
 }
 
 fn listen_url() -> String {
-    // Nova-3 is Deepgram's recommended streaming model; Nova-2 is legacy.
+    // Nova-3 streaming transcription.
+    // Note: Deepgram streaming returns HTTP 400 if utterance_end_ms < 1000 or if invalid query
+    // parameters like no_delay are provided. endpointing=100 provides crisp endpointing.
     let params = [
         ("model", "nova-3"),
         ("language", "en-US"),
@@ -44,7 +46,7 @@ fn listen_url() -> String {
         ("interim_results", "true"),
         ("punctuate", "true"),
         ("smart_format", "true"),
-        ("endpointing", "300"),
+        ("endpointing", "100"),
         ("utterance_end_ms", "1000"),
         ("vad_events", "true"),
     ];

@@ -316,3 +316,285 @@ body {
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 4px;
 }
+
+/* --- Call Selector Modal & Switcher --- */
+.call-modal {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  height: 100%;
+  padding: 14px 10px;
+  text-align: center;
+}
+
+.call-modal-title {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #ffd479;
+  text-transform: uppercase;
+}
+
+.call-modal-sub {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: -4px;
+  margin-bottom: 4px;
+}
+
+.call-card {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 180ms ease;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.call-card:hover {
+  background: rgba(212, 175, 55, 0.14);
+  border-color: #d4af37;
+  transform: translateY(-1px);
+}
+
+.call-card-name {
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.call-card-desc {
+  font-size: 9.5px;
+  color: rgba(255, 255, 255, 0.55);
+  line-height: 1.35;
+}
+
+.mic-selection-box {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+
+.mic-selection-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.call-pill {
+  font-size: 8px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(212, 175, 55, 0.18);
+  border: 1px solid rgba(212, 175, 55, 0.4);
+  color: #ffd479;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.call-pill:hover {
+  background: rgba(212, 175, 55, 0.3);
+}
+
+.engine-selection-box {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  text-align: left;
+}
+
+.engine-selection-label {
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.engine-toggle-group {
+  display: flex;
+  background: rgba(0, 0, 0, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 2px;
+  gap: 2px;
+}
+
+.engine-toggle-btn {
+  flex: 1;
+  font-size: 9.5px;
+  font-weight: 600;
+  padding: 4px 6px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  cursor: pointer;
+  transition: all 140ms ease;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+
+.engine-toggle-btn:hover {
+  color: #ffffff;
+}
+
+.engine-toggle-btn.active {
+  background: rgba(212, 175, 55, 0.25);
+  color: #ffd479;
+  border: 1px solid rgba(212, 175, 55, 0.5);
+  font-weight: 700;
+}
+
+.engine-pill {
+  font-size: 8px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(100, 200, 120, 0.18);
+  border: 1px solid rgba(100, 200, 120, 0.4);
+  color: #8be09b;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.engine-pill[data-engine="deepgram"] {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: rgba(56, 189, 248, 0.4);
+  color: #7dd3fc;
+}
+
+.engine-pill:hover {
+  filter: brightness(1.2);
+}
+
+/* --- prospect context, objection battlecard, key legend --- */
+
+.hud {
+  position: relative;
+}
+
+/* The selector gained prospect fields; allow it to scroll rather than clip in the short HUD. */
+.call-modal {
+  overflow-y: auto;
+  gap: 8px;
+}
+
+.prospect-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  width: 100%;
+}
+
+.prospect-box .picker {
+  flex: 1;
+  min-width: 0;
+}
+
+.context-card {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(212, 175, 55, 0.1);
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.75);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ctx-name {
+  color: #e8c96a;
+  font-weight: 700;
+}
+
+.ctx-niche {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.objection-card {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 44px;
+  z-index: 5;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(30, 24, 10, 0.96);
+  border: 1px solid rgba(212, 175, 55, 0.5);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+
+.objection-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.objection-key {
+  background: rgba(212, 175, 55, 0.9);
+  color: #1a1500;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-weight: 700;
+}
+
+.objection-label {
+  color: #e8c96a;
+  font-weight: 700;
+}
+
+.objection-dismiss {
+  margin-left: auto;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.objection-body {
+  margin-top: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: #ffffff;
+}
+
+.objection-cue {
+  margin-top: 4px;
+  font-size: 10px;
+  color: #e8c96a;
+}
+
+.legend {
+  font-size: 8px;
+  letter-spacing: 0.04em;
+  color: rgba(255, 255, 255, 0.28);
+  text-align: center;
+}
+
+

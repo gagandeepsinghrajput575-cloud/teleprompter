@@ -433,7 +433,7 @@ export default function App() {
             <span className="objection-label">{objection.label}</span>
             <span className="objection-dismiss">Esc to close</span>
           </div>
-          <div className="objection-body">{objection.rebuttal}</div>
+          <div className="objection-body">{spokenLine(objection.rebuttal)}</div>
           <div className="objection-cue">{objection.cue}</div>
         </div>
       )}
@@ -621,8 +621,8 @@ export default function App() {
           </div>
 
           <div className="legend">
-            <div>⌃1 Price · ⌃2 Timing · ⌃3 Trust · ⌃4 Authority · ⌃5 Need</div>
-            <div>⌃6 Competitor · ⌃7 Send info · ⌃8 Budget · ⌃9 Too busy · ⌃0 Not now</div>
+            <div>⌃1 Price · ⌃2 Not interested · ⌃3 Cold calls · ⌃4 Where number · ⌃5 Email</div>
+            <div>⌃6 Web guy · ⌃7 No AI · ⌃8 Booked out · ⌃9 Busy · ⌃0 Employee</div>
             <div>line ⌘⇧⌥←→ · section ⌘⇧⌥↑↓ · re-sync ⌘⇧⌥R · close ⌘⇧⌥D</div>
           </div>
         </>

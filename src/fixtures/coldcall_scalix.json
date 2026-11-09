@@ -1,93 +1,21 @@
 {
   "id": "coldcall-scalix",
   "title": "Cold Call: Scalix Elite",
-  "version": 1,
+  "version": 2,
   "audience": "Danish remodeling firm owners",
-  "notes": "Scalix Elite live cold-call flow. [Name] and [Niche] are filled from the dialer lead; branch rebuttals live on the objection keys.",
+  "notes": "Centre-line flow only. The side branches (objections) live on the Ctrl+0-9 objection keys.",
   "lines": [
-    {
-      "id": 1,
-      "phase": "Opening",
-      "label": "Turn 1 · Opening",
-      "raw": "[🐢 SLOW & LOW] Hi, am I speaking to [Name] [⬇️ DOWN]?"
-    },
-    {
-      "id": 2,
-      "phase": "Opening",
-      "label": "If: What is this regarding?",
-      "raw": "[⚡ PACE UP] It's Gagan from Scalix [⬇️ DOWN]. It's regarding the operations review for [Name] [⬇️ DOWN]."
-    },
-    {
-      "id": 3,
-      "phase": "Opening",
-      "label": "If: Is he expecting the call?",
-      "raw": "[🐢 SLOW & LOW] Not personally—his firm was placed on our research shortlist for this quarter's reviews [⬇️ DOWN]. [⏸️ PAUSE 1s] When is he naturally less busy [🤔 CURIOUS]?"
-    },
-    {
-      "id": 4,
-      "phase": "Turn 2 · Introduce",
-      "label": "Introduce",
-      "raw": "[Name], this is Gagan from Scalix Elite [⬇️ DOWN]. [⏸️ PAUSE 1s] How you doing [⬇️ DOWN]."
-    },
-    {
-      "id": 5,
-      "phase": "Turn 3 · Hook & Assumption",
-      "label": "The Hook",
-      "raw": "[🐢 SLOW & LOW] Good [⬇️ DOWN]. [⏸️ PAUSE 1s] [⚡ PACE UP] I'm reaching out, [Name], because we work with established [Niche] across Denmark—[🐢 SLOW & LOW] to be precise, teams with a strong local reputation [⬇️ DOWN]. [⏸️ PAUSE 1s] We aren't calling to sell leads or pitch generic marketing [⬇️ DOWN]. [⏸️ PAUSE 1s] Looking at your projects, I'm assuming you guys run a core crew of roughly 4 to 8 people on site right now [🤔 CURIOUS]?"
-    },
-    {
-      "id": 6,
-      "phase": "Turn 4 · The Leak & The Offer",
-      "label": "The Leak",
-      "raw": "Got it [⬇️ DOWN]. Yeah, so [⚡ PACE UP] the reason for the call is that at that team size, most firms leak 40,000 to 80,000 DKK in clean gross profit margin simply because high-ticket calls hit voicemail while the crew is on site [⬇️ DOWN]. [⏸️ PAUSE 1s] And that's actually just one of the leaks—there are a couple of other leaks which drain time and revenue [⬇️ DOWN]."
-    },
-    {
-      "id": 7,
-      "phase": "Turn 4 · The Leak & The Offer",
-      "label": "The Offer",
-      "raw": "[⚡ PACE UP] So we take a look at how you currently run things [⏸️ PAUSE 1s] to find any possible hidden gaps leaking revenue or taking up too much time [⬇️ DOWN]. [⏸️ PAUSE 1s] [🐢 SLOW & LOW] Then, before you invest anything, we identify where AI brings meaningful fixes, and put together a customized plan for how to actually implement it in your business [⬇️ DOWN]. [⏸️ PAUSE 1s] [⚡ PACE UP] And [Name], before committing to anything, [🐢 SLOW & LOW] I'm just looking to find 10 minutes either tomorrow or later this week, just so you can see what that would even look like for you guys [⬇️ DOWN]."
-    },
-    {
-      "id": 8,
-      "phase": "Turn 4 · The Leak & The Offer",
-      "label": "If: Why is it free?",
-      "raw": "[🐢 SLOW & LOW] Because we know 80% of established firms will adopt AI automation in the next 8 to 12 months [⬇️ DOWN]. [⏸️ PAUSE 1s] [🐢 SLOW & LOW] So we are building relationships and giving upfront value now, so if or when the time comes that you do want to plug those leaks, you've already got us as a trusted contact [⬇️ DOWN]. [⏸️ PAUSE 1s] Sounds fair [🤔 CURIOUS]?"
-    },
-    {
-      "id": 9,
-      "phase": "Turn 4 · The Leak & The Offer",
-      "label": "If: Booked out / plenty of work",
-      "raw": "[🐢 SLOW & LOW] The issue when you're slammed isn't getting more work—it's missing out on cherry-picking the highest-margin 200,000 DKK jobs while wasting your evenings quoting tire-kickers [⬇️ DOWN]. That's why we should connect for 10 minutes so you can get your evenings back—is tomorrow or Thursday better [⬇️ DOWN]?"
-    },
-    {
-      "id": 10,
-      "phase": "Turn 5 · Lock the time",
-      "label": "Lock the time",
-      "raw": "[🐢 SLOW & LOW] Awesome. When are you naturally more free—mornings or afternoons [⬇️ DOWN]?"
-    },
-    {
-      "id": 11,
-      "phase": "Turn 5 · Lock the time",
-      "label": "Narrow it",
-      "raw": "To be precise, would around 12:30 or 15:30 when you're off tools work better [⬇️ DOWN]?"
-    },
-    {
-      "id": 12,
-      "phase": "Turn 6 · Confirm the email",
-      "label": "Confirm email",
-      "raw": "[⚡ PACE UP] Perfect, 15:30 it is [⬇️ DOWN]. And your best email is just [firstname]@[company domain].dk, right [🤔 CURIOUS]?"
-    },
-    {
-      "id": 13,
-      "phase": "Turn 7 · Sign off",
-      "label": "Spell back email",
-      "raw": "[🐢 SLOW & LOW] Got it—that's [spell back email address slowly], right [🤔 CURIOUS]?"
-    },
-    {
-      "id": 14,
-      "phase": "Turn 7 · Sign off",
-      "label": "Sign off",
-      "raw": "Perfect [⬇️ DOWN]. [⚡ PACE UP] My assistant will call you 60 minutes before the meeting as a quick reminder, and they will help you get to the meeting without any technical problems. So we'll catch up later, [Name] [⬇️ DOWN]. [🐢 SLOW & LOW] Take care, have a nice day [⬇️ DOWN]."
-    }
+    { "id": 1, "phase": "Turn 1 · Opening", "label": "Opening", "raw": "[🐢 SLOW & LOW] Hi, am I speaking to [Name] [⬇️ DOWN]?" },
+    { "id": 2, "phase": "Turn 1 · Opening", "label": "If: What is this regarding?", "raw": "[⚡ PACE UP] It's Gagan from Scalix [⬇️ DOWN]. It's regarding the operations review for [Name] [⬇️ DOWN]." },
+    { "id": 3, "phase": "Turn 1 · Opening", "label": "If: Is he expecting the call?", "raw": "[🐢 SLOW & LOW] Not personally—his firm was placed on our research shortlist for this quarter's reviews [⬇️ DOWN]. [⏸️ PAUSE 1s] When is he naturally less busy [🤔 CURIOUS]?" },
+    { "id": 4, "phase": "Turn 2 · Introduce", "label": "Introduce", "raw": "[Name], this is Gagan from Scalix Elite [⬇️ DOWN]. [⏸️ PAUSE 1s] How you doing [⬇️ DOWN]." },
+    { "id": 5, "phase": "Turn 3 · Hook & Assumption", "label": "The Hook", "raw": "[🐢 SLOW & LOW] Good [⬇️ DOWN]. [⏸️ PAUSE 1s] [⚡ PACE UP] I'm reaching out, [Name], because we work with established [Niche] across Denmark—[🐢 SLOW & LOW] to be precise, teams with a strong local reputation [⬇️ DOWN]. [⏸️ PAUSE 1s] We aren't calling to sell leads or pitch generic marketing [⬇️ DOWN]. [⏸️ PAUSE 1s] Looking at your projects, I'm assuming you guys run a core crew of roughly 4 to 8 people on site right now [🤔 CURIOUS]?" },
+    { "id": 6, "phase": "Turn 4 · The Leak & The Offer", "label": "The Leak", "raw": "Got it [⬇️ DOWN]. Yeah, so [⚡ PACE UP] the reason for the call is that at that team size, most firms leak 40,000 to 80,000 DKK in clean gross profit margin simply because high-ticket calls hit voicemail while the crew is on site [⬇️ DOWN]. [⏸️ PAUSE 1s] And that's actually just one of the leaks—there are a couple of other leaks which drain time and revenue [⬇️ DOWN]." },
+    { "id": 7, "phase": "Turn 4 · The Leak & The Offer", "label": "The Offer", "raw": "[⚡ PACE UP] So we take a look at how you currently run things [⏸️ PAUSE 1s] to find any possible hidden gaps leaking revenue or taking up too much time [⬇️ DOWN]. [⏸️ PAUSE 1s] [🐢 SLOW & LOW] Then, before you invest anything, we identify where AI brings meaningful fixes, and put together a customized plan for how to actually implement it in your business [⬇️ DOWN]. [⏸️ PAUSE 1s] [⚡ PACE UP] And [Name], before committing to anything, [🐢 SLOW & LOW] I'm just looking to find 10 minutes either tomorrow or later this week, just so you can see what that would even look like for you guys [⬇️ DOWN]." },
+    { "id": 8, "phase": "Turn 5 · Lock the time", "label": "Lock the time", "raw": "[🐢 SLOW & LOW] Awesome. When are you naturally more free—mornings or afternoons [⬇️ DOWN]?" },
+    { "id": 9, "phase": "Turn 5 · Lock the time", "label": "Narrow it", "raw": "To be precise, would around 12:30 or 15:30 when you're off tools work better [⬇️ DOWN]?" },
+    { "id": 10, "phase": "Turn 6 · Confirm the email", "label": "Confirm email", "raw": "[⚡ PACE UP] Perfect, 15:30 it is [⬇️ DOWN]. And your best email is just [firstname]@[company domain].dk, right [🤔 CURIOUS]?" },
+    { "id": 11, "phase": "Turn 7 · Spell back & sign off", "label": "Spell back email", "raw": "[🐢 SLOW & LOW] Got it—that's [spell back email address slowly], right [🤔 CURIOUS]?" },
+    { "id": 12, "phase": "Turn 7 · Spell back & sign off", "label": "Sign off", "raw": "Perfect [⬇️ DOWN]. [⚡ PACE UP] My assistant will call you 60 minutes before the meeting as a quick reminder, and they will help you get to the meeting without any technical problems. So we'll catch up later, [Name] [⬇️ DOWN]. [🐢 SLOW & LOW] Take care, have a nice day [⬇️ DOWN]." }
   ]
 }

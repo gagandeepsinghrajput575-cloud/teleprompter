@@ -192,6 +192,10 @@ open /Applications/StealthPrompter.app
 | **Manual Line Nudge** | `ArrowUp` / `ArrowDown` or `⌘⇧⌥↑` / `⌘⇧⌥↓` | Manually moves the active script position forward or backward |
 | **Switch Call** | Click `🔍 Audit (Call 1) ▾` in header | Returns to playbook selector to pick Call 1 or Call 2 |
 | **Toggle STT Engine** | Click `[🍏 Apple]` / `[☁️ Deepgram]` | Toggles between local Apple Neural Engine and Deepgram cloud |
+| **Objection Card** | `⌃1`–`⌃9`, `⌃0` | Shows that branch's rebuttal; the script position never moves |
+| **Bare Objection Keys** | `1`–`9`, `0` (toggle in HUD) | Same cards with no Control key — only while a session is listening |
+| **Prospect Audio** | `👂 Prospect audio` toggle | Transcribes the call and suggests the objection card automatically |
+| **Re-sync / Dismiss** | `⌘⇧⌥R` / `⌘⇧⌥D` | Re-anchors at the current line / closes the objection card |
 | **Reposition HUD** | Click and drag grab bar (when unlocked) | Moves HUD across screens; geometry persists automatically |
 
 ---
@@ -207,7 +211,7 @@ npm run test
 # Typecheck frontend
 npm run build
 
-# Run Rust backend test suite (39 tests covering audio, tracker, Jev parsing, keys, STT)
+# Run Rust backend test suite (75 tests covering audio, tracker, Jev parsing, keys, STT, objections)
 cargo test --manifest-path src-tauri/Cargo.toml
 
 # Lint Rust codebase
@@ -419,7 +423,9 @@ exists precisely because a click-through HUD must not depend on one.
 
 ### Not yet built
 
-- Stage 2 tuning against real model output
+- Per-app audio filtering (the prospect tap currently hears the whole Mac)
+- A model tier on ambiguous objections (keywords only today)
+- A confirm chip instead of showing the card immediately
 - Cue coaching from audio features (pace, inflection) — cues are authored metadata today
 - Voice-activity gating to cut Deepgram cost on silence
 - Rate limiting / backpressure when the model is slow but up

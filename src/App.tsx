@@ -621,7 +621,9 @@ export default function App() {
           </div>
 
           <div className="legend">
-            ⌘⇧⌥←/→ line · ⌘⇧⌥↑/↓ section · ⌘⇧⌥R re-sync · ⌘⇧⌥D close · ⌃1–0 objection
+            <div>⌃1 Price · ⌃2 Timing · ⌃3 Trust · ⌃4 Authority · ⌃5 Need</div>
+            <div>⌃6 Competitor · ⌃7 Send info · ⌃8 Budget · ⌃9 Too busy · ⌃0 Not now</div>
+            <div>line ⌘⇧⌥←→ · section ⌘⇧⌥↑↓ · re-sync ⌘⇧⌥R · close ⌘⇧⌥D</div>
           </div>
         </>
       )}

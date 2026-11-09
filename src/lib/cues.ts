@@ -15,20 +15,18 @@ export type Cue = {
 /** Minimum pause that is worth interrupting the rep's flow to display. */
 export const HOLD_THRESHOLD_MS = 1200;
 
-/** Human-readable chips for the active block. Order is stable for snapshot testing. */
+/** Human-readable chips for the active block. Only emoji are shown for minimal visual distraction. */
 export function cueChips(cue: Cue): string[] {
   const chips: string[] = [];
 
-  // Labels mirror the script's own annotation vocabulary so the HUD reads the same way
-  // the rep wrote the script.
-  if (cue.tone === "down") chips.push("⬇️ DOWN");
-  if (cue.tone === "up") chips.push("🤔 CURIOUS");
+  if (cue.tone === "down") chips.push("⬇️");
+  if (cue.tone === "up") chips.push("🤔");
 
-  if (cue.pace === "slow") chips.push("🐢 SLOW & LOW");
-  if (cue.pace === "fast") chips.push("⚡ PACE UP");
+  if (cue.pace === "slow") chips.push("🐢");
+  if (cue.pace === "fast") chips.push("⚡");
 
   const hold = holdSeconds(cue);
-  if (hold !== null) chips.push(`⏸️ ${hold}s`);
+  if (hold !== null) chips.push("⏸️");
 
   return chips;
 }

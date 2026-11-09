@@ -108,10 +108,25 @@ fn strip_annotations(raw: &str) -> String {
         }
     }
     out.push_str(rest);
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
+    // Strip any loose cue emojis that may exist outside brackets
+    let cleaned: String = out
+        .chars()
+        .filter(|&c| c != '⬇' && c != '🤔' && c != '🐢' && c != '⚡' && c != '⏸' && c != '\u{fe0f}')
+        .collect();
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn is_delivery_marker(token: &str) -> bool {
+    // Pure emoji delivery markers: ⬇, ⬇️, 🤔, 🐢, ⚡, ⏸, ⏸️
+    if token.contains('⬇')
+        || token.contains('🤔')
+        || token.contains('🐢')
+        || token.contains('⚡')
+        || token.contains('⏸')
+    {
+        return true;
+    }
+
     let letters: String = token
         .chars()
         .filter(|c| c.is_ascii_alphabetic() || *c == '&' || c.is_whitespace())

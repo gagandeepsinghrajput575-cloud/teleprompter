@@ -9,187 +9,187 @@
       "id": 1,
       "phase": "PHASE 1: SETTING THE FRAME (MIN 0-1.5)",
       "label": "Good to meet & carve time",
-      "raw": "[Name], good to meet you [⬇️ DOWN]. [⏸️ PAUSE 1s] Appreciate you carving out 10 minutes [⬇️ DOWN]."
+      "raw": "[Name], good to meet you [⬇️]. [⏸️] Appreciate you carving out 10 minutes [⬇️]."
     },
     {
       "id": 2,
       "phase": "PHASE 1: SETTING THE FRAME (MIN 0-1.5)",
       "label": "Not here to pitch",
-      "raw": "[🐢 SLOW & LOW] Just to set the stage so we use our time well—I'm not here to pitch you anything today [⬇️ DOWN]."
+      "raw": "[🐢] Just to set the stage so we use our time well—I'm not here to pitch you anything today [⬇️]."
     },
     {
       "id": 3,
       "phase": "PHASE 1: SETTING THE FRAME (MIN 0-1.5)",
       "label": "Where AI makes sense",
-      "raw": "[⏸️ PAUSE 1s] Every firm runs their day-to-day differently, so I don't even know where AI makes the most sense for you yet [⬇️ DOWN]."
+      "raw": "[⏸️] Every firm runs their day-to-day differently, so I don't even know where AI makes the most sense for you yet [⬇️]."
     },
     {
       "id": 4,
       "phase": "PHASE 1: SETTING THE FRAME (MIN 0-1.5)",
       "label": "Walk me through operations",
-      "raw": "[⚡ PACE UP SLIGHTLY] What I'd love to do for the next 8 minutes is just have you walk me through how your whole firm operates right now [⬇️ DOWN]."
+      "raw": "[⚡] What I'd love to do for the next 8 minutes is just have you walk me through how your whole firm operates right now [⬇️]."
     },
     {
       "id": 5,
       "phase": "PHASE 1: SETTING THE FRAME (MIN 0-1.5)",
       "label": "Front to backend admin",
-      "raw": "From how clients find you, to how you handle calls and quotes, to the backend admin [⬇️ DOWN]."
+      "raw": "From how clients find you, to how you handle calls and quotes, to the backend admin [⬇️]."
     },
     {
       "id": 6,
       "phase": "PHASE 1: SETTING THE FRAME (MIN 0-1.5)",
       "label": "Custom preview promise",
-      "raw": "[⏸️ PAUSE 1s] [🐢 SLOW & LOW] If I see a clear way we can save you hours every week or add revenue, I'll map out a custom plan and build a working preview for you to see next time [⬇️ DOWN]."
+      "raw": "[⏸️] [🐢] If I see a clear way we can save you hours every week or add revenue, I'll map out a custom plan and build a working preview for you to see next time [⬇️]."
     },
     {
       "id": 7,
       "phase": "PHASE 1: SETTING THE FRAME (MIN 0-1.5)",
       "label": "Sound fair",
-      "raw": "If I don't see a massive return for you, I'll tell you straight and we'll part ways [⬇️ DOWN]. [⏸️ PAUSE 1.5s] Sound fair [🤔 CURIOUS]?"
+      "raw": "If I don't see a massive return for you, I'll tell you straight and we'll part ways [⬇️]. [⏸️] Sound fair [🤔]?"
     },
     {
       "id": 8,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 1: Bird's eye focus",
-      "raw": "To start from a bird's-eye view—I saw on your site that you guys focus on [mention 1 specific thing from their website] [⬇️ DOWN]."
+      "raw": "To start from a bird's-eye view—I saw on your site that you guys focus on [mention 1 specific thing from their website] [⬇️]."
     },
     {
       "id": 9,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 1: Firm structure",
-      "raw": "[⏸️ PAUSE 1s] Walk me through how the firm is structured right now [⬇️ DOWN]."
+      "raw": "[⏸️] Walk me through how the firm is structured right now [⬇️]."
     },
     {
       "id": 10,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 1: Team & typical day",
-      "raw": "How many people are on the team, and what does a typical day look like for you personally [🤔 CURIOUS]?"
+      "raw": "How many people are on the team, and what does a typical day look like for you personally [🤔]?"
     },
     {
       "id": 11,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 1: Personal time drain",
-      "raw": "[🤔 CURIOUS / HEAD TILT] Got it... and out of everything you're doing day-to-day, what's eating up the most of your personal time right now?"
+      "raw": "[🤔] Got it... and out of everything you're doing day-to-day, what's eating up the most of your personal time right now?"
     },
     {
       "id": 12,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 2: Front end lead gen",
-      "raw": "Okay, let's look at the front end [⬇️ DOWN]. How are new [listings / remodeling projects] coming in right now [🤔 CURIOUS]? Is it mostly word-of-mouth, or are you running your own campaigns?"
+      "raw": "Okay, let's look at the front end [⬇️]. How are new [listings / remodeling projects] coming in right now [🤔]? Is it mostly word-of-mouth, or are you running your own campaigns?"
     },
     {
       "id": 13,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 2: Dormant photos",
-      "raw": "[🐢 SLOW & LOW] Makes sense [⬇️ DOWN]. I'm assuming you have a ton of photos of past [properties / projects] sitting on your phone or website, right? [⏸️ PAUSE 1s]"
+      "raw": "[🐢] Makes sense [⬇️]. I'm assuming you have a ton of photos of past [properties / projects] sitting on your phone or website, right? [⏸️]"
     },
     {
       "id": 14,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 2: Do photos sit there",
-      "raw": "What happens to those right now—do they mostly just sit there [🤔 CURIOUS]?"
+      "raw": "What happens to those right now—do they mostly just sit there [🤔]?"
     },
     {
       "id": 15,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 3: Inbound speed",
-      "raw": "[🐢 SLOW & LOW] Now walk me through what happens the exact second a new inquiry comes in [⬇️ DOWN]. [⏸️ PAUSE 1s]"
+      "raw": "[🐢] Now walk me through what happens the exact second a new inquiry comes in [⬇️]. [⏸️]"
     },
     {
       "id": 16,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 3: Catching 8PM inquiries",
-      "raw": "Say a high-value client calls or messages while you're [on site / in a viewing] or at 8:00 PM [⬇️ DOWN]. Who catches that, and how long does it usually take before they're qualified and booked onto your calendar [🤔 CURIOUS]?"
+      "raw": "Say a high-value client calls or messages while you're [on site / in a viewing] or at 8:00 PM [⬇️]. Who catches that, and how long does it usually take before they're qualified and booked onto your calendar [🤔]?"
     },
     {
       "id": 17,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 3: Tire-kickers",
-      "raw": "[🤔 CURIOUS / HEAD TILT] Wait, tell me more about that... [⏸️ PAUSE 1s] How many inquiries a week do you think end up being tire-kickers who don't actually have the budget, where you've already wasted time calling them back or driving out [🤔 CURIOUS]?"
+      "raw": "[🤔] Wait, tell me more about that... [⏸️] How many inquiries a week do you think end up being tire-kickers who don't actually have the budget, where you've already wasted time calling them back or driving out [🤔]?"
     },
     {
       "id": 18,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 4: Annoying admin",
-      "raw": "Got it [⬇️ DOWN]. And once a client is in the pipeline—what's the most annoying, repetitive computer work or admin you or the team have to do every week [🤔 CURIOUS]?"
+      "raw": "Got it [⬇️]. And once a client is in the pipeline—what's the most annoying, repetitive computer work or admin you or the team have to do every week [🤔]?"
     },
     {
       "id": 19,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 4: Review loop",
-      "raw": "Last piece of the puzzle [⬇️ DOWN]. After you finish a job, how do you currently get them to leave a Google review [🤔 CURIOUS]? Is that automated, or do people usually just forget?"
+      "raw": "Last piece of the puzzle [⬇️]. After you finish a job, how do you currently get them to leave a Google review [🤔]? Is that automated, or do people usually just forget?"
     },
     {
       "id": 20,
       "phase": "PHASE 3: CLINICAL DIAGNOSIS (MIN 8-9)",
       "label": "Trade work not bottleneck",
-      "raw": "[🐢 SLOW & LOW] Okay, I've got a really clear picture of how the firm runs [⬇️ DOWN]. [⏸️ PAUSE 1.5s] Honestly, [Name], your actual work isn't the bottleneck at all [⬇️ DOWN]."
+      "raw": "[🐢] Okay, I've got a really clear picture of how the firm runs [⬇️]. [⏸️] Honestly, [Name], your actual work isn't the bottleneck at all [⬇️]."
     },
     {
       "id": 21,
       "phase": "PHASE 3: CLINICAL DIAGNOSIS (MIN 8-9)",
       "label": "Three specific leaks",
-      "raw": "Looking at your workflow from top to bottom, you have three specific operational leaks that are costing you serious time and money right now [⬇️ DOWN]: [⏸️ PAUSE 1.5s]"
+      "raw": "Looking at your workflow from top to bottom, you have three specific operational leaks that are costing you serious time and money right now [⬇️]: [⏸️]"
     },
     {
       "id": 22,
       "phase": "PHASE 3: CLINICAL DIAGNOSIS (MIN 8-9)",
       "label": "Leak 1: Speed-to-lead",
-      "raw": "First is the Speed-to-Lead Leak [⬇️ DOWN]. [⏸️ PAUSE 1s] When high-value inquiries come in while you're busy, that delay before you can screen them is letting your best jobs slip to faster competitors [⬇️ DOWN]—while you're still wasting time on low-budget tire-kickers [⬇️ DOWN]. [⏸️ PAUSE 1.5s]"
+      "raw": "First is the Speed-to-Lead Leak [⬇️]. [⏸️] When high-value inquiries come in while you're busy, that delay before you can screen them is letting your best jobs slip to faster competitors [⬇️]—while you're still wasting time on low-budget tire-kickers [⬇️]. [⏸️]"
     },
     {
       "id": 23,
       "phase": "PHASE 3: CLINICAL DIAGNOSIS (MIN 8-9)",
       "label": "Leak 2: Dormant assets",
-      "raw": "Second is the Dormant Asset Leak [⬇️ DOWN]. [⏸️ PAUSE 1s] You have great past projects and happy clients, but because nothing is automatically turning them into daily visibility and 5-star Google reviews, you're relying way too much on referrals [⬇️ DOWN]. [⏸️ PAUSE 1.5s]"
+      "raw": "Second is the Dormant Asset Leak [⬇️]. [⏸️] You have great past projects and happy clients, but because nothing is automatically turning them into daily visibility and 5-star Google reviews, you're relying way too much on referrals [⬇️]. [⏸️]"
     },
     {
       "id": 24,
       "phase": "PHASE 3: CLINICAL DIAGNOSIS (MIN 8-9)",
       "label": "Leak 3: Admin bleed",
-      "raw": "And third is the Evening Admin Bleed [⬇️ DOWN]. [⏸️ PAUSE 1s] You're personally losing [X] hours every week doing repetitive computer work like [insert their exact admin pain] [⬇️ DOWN]. [⏸️ PAUSE 2s]"
+      "raw": "And third is the Evening Admin Bleed [⬇️]. [⏸️] You're personally losing [X] hours every week doing repetitive computer work like [insert their exact admin pain] [⬇️]. [⏸️]"
     },
     {
       "id": 25,
       "phase": "PHASE 3: CLINICAL DIAGNOSIS (MIN 8-9)",
       "label": "15k on the table",
-      "raw": "[🐢 SLOW & LOW - DROP VOLUME SLIGHTLY] If you add those three up—missing just one or two good jobs a month plus losing [X] hours a week—you're easily leaving [100,000+ DKK / $15,000+] on the table every single month [⬇️ DOWN]. [⏸️ PAUSE 2s - DO NOT SPEAK]"
+      "raw": "[🐢] If you add those three up—missing just one or two good jobs a month plus losing [X] hours a week—you're easily leaving [100,000+ DKK / $15,000+] on the table every single month [⬇️]. [⏸️]"
     },
     {
       "id": 26,
       "phase": "PHASE 3: CLINICAL DIAGNOSIS (MIN 8-9)",
       "label": "Diagnosis spot-on",
-      "raw": "Does that diagnosis feel spot-on to you [🤔 CURIOUS]?"
+      "raw": "Does that diagnosis feel spot-on to you [🤔]?"
     },
     {
       "id": 27,
       "phase": "PHASE 3: CLINICAL DIAGNOSIS (MIN 8-9)",
       "label": "Decision partner check",
-      "raw": "[🤔 CURIOUS] Got it. Quick question before I go map this out—when you guys look at fixing operational bottlenecks like this, is that 100% your call, or do you have a business partner who weighs in too?"
+      "raw": "[🤔] Got it. Quick question before I go map this out—when you guys look at fixing operational bottlenecks like this, is that 100% your call, or do you have a business partner who weighs in too?"
     },
     {
       "id": 28,
       "phase": "PHASE 4: LOCK CALL 2 (MIN 9-10)",
       "label": "Next steps & no generic PDFs",
-      "raw": "[⚡ PACE UP] Here is what we're going to do next [⬇️ DOWN]. I don't like guessing on the spot, and I don't send generic PDF reports [⬇️ DOWN]. [⏸️ PAUSE 1s]"
+      "raw": "[⚡] Here is what we're going to do next [⬇️]. I don't like guessing on the spot, and I don't send generic PDF reports [⬇️]. [⏸️]"
     },
     {
       "id": 29,
       "phase": "PHASE 4: LOCK CALL 2 (MIN 9-10)",
       "label": "Custom AI architecture map",
-      "raw": "Tonight, I'm going to sit down with my engineering team, take the exact notes from how your firm runs, and map out a custom AI architecture specifically for [Company Name] that plugs all three of those leaks [⬇️ DOWN]. [⏸️ PAUSE 1s]"
+      "raw": "Tonight, I'm going to sit down with my engineering team, take the exact notes from how your firm runs, and map out a custom AI architecture specifically for [Company Name] that plugs all three of those leaks [⬇️]. [⏸️]"
     },
     {
       "id": 30,
       "phase": "PHASE 4: LOCK CALL 2 (MIN 9-10)",
       "label": "Working prototype promise",
-      "raw": "[🐢 SLOW & LOW] Even better—instead of just talking about it in theory, I'm actually going to build out a live, working prototype customized to your business so you can test it with your own hands [⬇️ DOWN]."
+      "raw": "[🐢] Even better—instead of just talking about it in theory, I'm actually going to build out a live, working prototype customized to your business so you can test it with your own hands [⬇️]."
     },
     {
       "id": 31,
       "phase": "PHASE 4: LOCK CALL 2 (MIN 9-10)",
       "label": "Lock the time",
-      "raw": "[⚡ PACE UP] It'll take me about 24 hours to put your custom build together [⬇️ DOWN]. Are you in front of your computer tomorrow around 14:30, or is Thursday at 15:00 better [⬇️ DOWN]?"
+      "raw": "[⚡] It'll take me about 24 hours to put your custom build together [⬇️]. Are you in front of your computer tomorrow around 14:30, or is Thursday at 15:00 better [⬇️]?"
     }
   ]
 }

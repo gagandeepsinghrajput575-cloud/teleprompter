@@ -5,10 +5,12 @@ import { classifyToken, loadScript, parseAnnotations } from "./script";
 describe("classifyToken", () => {
   it("recognises a downward inflection marker", () => {
     expect(classifyToken("\u2B07\uFE0F DOWN")).toEqual([{ kind: "tone", value: "down" }]);
+    expect(classifyToken("\u2B07\uFE0F")).toEqual([{ kind: "tone", value: "down" }]);
   });
 
   it("maps CURIOUS to an upward inflection", () => {
     expect(classifyToken("\u{1F914} CURIOUS")).toEqual([{ kind: "tone", value: "up" }]);
+    expect(classifyToken("\u{1F914}")).toEqual([{ kind: "tone", value: "up" }]);
   });
 
   it("maps SLOW & LOW to slow pace plus downward tone", () => {
@@ -16,14 +18,20 @@ describe("classifyToken", () => {
       { kind: "pace", value: "slow" },
       { kind: "tone", value: "down" },
     ]);
+    expect(classifyToken("\u{1F422}")).toEqual([
+      { kind: "pace", value: "slow" },
+      { kind: "tone", value: "down" },
+    ]);
   });
 
   it("maps PACE UP to fast pace and NOT upward tone", () => {
     expect(classifyToken("\u26A1 PACE UP")).toEqual([{ kind: "pace", value: "fast" }]);
+    expect(classifyToken("\u26A1")).toEqual([{ kind: "pace", value: "fast" }]);
   });
 
   it("parses fractional second pauses", () => {
     expect(classifyToken("\u23F8\uFE0F 1.5s")).toEqual([{ kind: "pause", ms: 1500 }]);
+    expect(classifyToken("\u23F8\uFE0F")).toEqual([{ kind: "pause", ms: 3000 }]);
   });
 
   it("treats the [Name] placeholder as ordinary text", () => {

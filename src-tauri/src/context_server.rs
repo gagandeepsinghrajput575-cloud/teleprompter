@@ -42,6 +42,7 @@ fn respond(stream: &mut TcpStream, status: u16, body: &str) {
     let reason = match status {
         200 => "OK",
         400 => "Bad Request",
+        403 => "Forbidden",
         _ => "Not Found",
     };
     let response = format!(
@@ -52,8 +53,9 @@ fn respond(stream: &mut TcpStream, status: u16, body: &str) {
     let _ = stream.flush();
 }
 
-/// Reads one small request (headers + Content-Length body). Returns `(request_line, body)`.
-fn read_request(stream: &mut TcpStream) -> Option<(String, String)> {
+/// Reads one small request (headers + Content-Length body).
+/// Returns `(request_line, header_block, body)`.
+fn read_request(stream: &mut TcpStream) -> Option<(String, String, String)> {
     let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
     let mut data: Vec<u8> = Vec::new();
     let mut buf = [0u8; 4096];
@@ -89,7 +91,7 @@ fn read_request(stream: &mut TcpStream) -> Option<(String, String)> {
             let end = (body_start + content_length).min(data.len());
             let body = String::from_utf8_lossy(&data[body_start..end]).to_string();
             let request_line = headers.lines().next().unwrap_or("").to_string();
-            return Some((request_line, body));
+            return Some((request_line, headers, body));
         }
         if data.len() > 65_536 {
             break;
@@ -99,10 +101,21 @@ fn read_request(stream: &mut TcpStream) -> Option<(String, String)> {
 }
 
 fn handle(mut stream: TcpStream, app: &tauri::AppHandle) {
-    let Some((request_line, body)) = read_request(&mut stream) else {
+    let Some((request_line, headers, body)) = read_request(&mut stream) else {
         respond(&mut stream, 400, "{\"ok\":false}");
         return;
     };
+    // A browser sends an Origin header on cross-site requests; the local dialer (Node) and curl do
+    // not. Refuse browser-originated requests so a random web page cannot set the call context.
+    if headers.to_ascii_lowercase().contains("\norigin:") {
+        println!("CALL_CONTEXT_REJECTED browser origin");
+        respond(
+            &mut stream,
+            403,
+            "{\"ok\":false,\"error\":\"origin not allowed\"}",
+        );
+        return;
+    }
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or("");
     let path = parts.next().unwrap_or("");
@@ -156,7 +169,9 @@ pub fn spawn(app: tauri::AppHandle) {
             };
             println!("CALL_CONTEXT_LISTENING http://{addr}/context");
             for stream in listener.incoming().flatten() {
-                handle(stream, &app);
+                // One thread per connection: a hung/slow client can never block a real push.
+                let app = app.clone();
+                std::thread::spawn(move || handle(stream, &app));
             }
         })
         .ok();

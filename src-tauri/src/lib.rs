@@ -12,7 +12,9 @@ mod audio;
 mod keys;
 #[cfg(target_os = "macos")]
 mod mic_permission;
+mod objection_detect;
 mod stt;
+mod system_audio;
 mod tracker;
 
 #[cfg(target_os = "macos")]
@@ -316,6 +318,10 @@ const MIC_SETTINGS_URL: &str =
 const SPEECH_SETTINGS_URL: &str =
     "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition";
 
+/// `open` target for Screen & System Audio Recording, which the prospect tap needs.
+const SCREEN_SETTINGS_URL: &str =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture";
+
 /// Sends the user straight to the permission they need. A denial is permanent until they change
 /// it there, so telling them without a way to act on it is not enough.
 #[tauri::command]
@@ -337,6 +343,17 @@ fn open_speech_settings() {
     {
         Ok(_) => println!("SPEECH_PERMISSION opened settings"),
         Err(err) => eprintln!("SPEECH_PERMISSION_ERROR cannot open settings: {err}"),
+    }
+}
+
+#[tauri::command]
+fn open_screen_settings() {
+    match std::process::Command::new("open")
+        .arg(SCREEN_SETTINGS_URL)
+        .status()
+    {
+        Ok(_) => println!("SCREEN_PERMISSION opened settings"),
+        Err(err) => eprintln!("SCREEN_PERMISSION_ERROR cannot open settings: {err}"),
     }
 }
 
@@ -759,6 +776,107 @@ fn stop_session(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// True while the *prospect* (system-audio) capture is running.
+static PROSPECT_AUDIO_RUNNING: AtomicBool = AtomicBool::new(false);
+
+/// Start the prospect stream: system audio → a second, isolated Apple STT session → keyword
+/// classifier → the existing `objection` event, so the battlecard appears on its own.
+///
+/// Additive by construction: the microphone session, the tracker and Pulse Dialer are untouched.
+fn start_prospect_audio(app: tauri::AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    {
+        if PROSPECT_AUDIO_RUNNING.swap(true, Ordering::SeqCst) {
+            return Ok("prospect audio already running".to_string());
+        }
+        system_audio::attach(app.clone());
+        // A permission prompt can block for up to a minute, so none of this runs on the caller's
+        // thread: the HUD keeps rendering and the microphone session is unaffected either way.
+        tauri::async_runtime::spawn_blocking(move || {
+            let fail = |app: &tauri::AppHandle, message: String| {
+                eprintln!("PROSPECT_AUDIO_FAIL {message}");
+                let _ = app.emit(
+                    "prospect_status",
+                    system_audio::ProspectStatus {
+                        running: false,
+                        message,
+                    },
+                );
+                PROSPECT_AUDIO_RUNNING.store(false, Ordering::SeqCst);
+            };
+
+            // Same on-device recogniser, so it needs the Speech permission the mic session uses.
+            if let Err(err) = apple_stt::ensure_permission() {
+                fail(&app, err);
+                return;
+            }
+            if !PROSPECT_AUDIO_RUNNING.load(Ordering::SeqCst) {
+                return; // toggled off while the prompt was up
+            }
+
+            let rx = match system_audio::start() {
+                Ok(rx) => rx,
+                Err(err) => {
+                    fail(&app, err);
+                    return;
+                }
+            };
+
+            let (event_tx, mut event_rx) = mpsc::unbounded_channel::<stt::SttEvent>();
+            let stop = Arc::new(AtomicBool::new(false));
+            tauri::async_runtime::spawn(apple_stt::run(rx, event_tx, stop));
+
+            let emit_to = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let mut recent = objection_detect::Recent::new();
+                let mut tail = String::new();
+                while let Some(event) = event_rx.recv().await {
+                    match event {
+                        stt::SttEvent::Transcript(t) => {
+                            let _ = emit_to.emit("prospect_transcript", t.text.clone());
+                            tail.push(' ');
+                            tail.push_str(&t.text);
+                            // Keep the last ~30 words so a phrase split across interims matches.
+                            let words: Vec<&str> = tail.split_whitespace().collect();
+                            if words.len() > 30 {
+                                tail = words[words.len() - 30..].join(" ");
+                            }
+                            if let Some(index) = objection_detect::classify(&tail) {
+                                if recent.should_emit(index) {
+                                    println!("PROSPECT_OBJECTION index={index} tail=\"{tail}\"");
+                                    let _ = emit_to.emit("objection", index);
+                                }
+                            }
+                        }
+                        stt::SttEvent::Error(err) => eprintln!("PROSPECT_STT_ERROR {err}"),
+                        stt::SttEvent::Connected => println!("PROSPECT_STT_READY"),
+                    }
+                }
+                println!("PROSPECT_LOOP_ENDED");
+            });
+        });
+
+        Ok("starting prospect audio (macOS may ask for Speech and Screen Recording)".to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("prospect audio is only supported on macOS".to_string())
+    }
+}
+
+#[tauri::command]
+fn system_audio_start(app: tauri::AppHandle) -> Result<String, String> {
+    start_prospect_audio(app)
+}
+
+#[tauri::command]
+fn system_audio_stop() -> Result<(), String> {
+    PROSPECT_AUDIO_RUNNING.store(false, Ordering::SeqCst);
+    system_audio::stop();
+    Ok(())
+}
+
 #[tauri::command]
 fn list_devices() -> Result<Vec<String>, String> {
     audio::list_input_devices()
@@ -1122,6 +1240,9 @@ pub fn run() {
             drag_probe,
             open_mic_settings,
             open_speech_settings,
+            open_screen_settings,
+            system_audio_start,
+            system_audio_stop,
             call_context
         ])
         .on_window_event(|window, event| {
@@ -1145,6 +1266,14 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            // Test hook: start the prospect (system-audio) tap at launch so the ScreenCaptureKit
+            // path and its permission prompt can be exercised without clicking the HUD.
+            if std::env::var("STEALTH_PROSPECT_AUDIO").is_ok() {
+                match start_prospect_audio(app.handle().clone()) {
+                    Ok(msg) => println!("PROSPECT_AUDIO_AUTOSTART {msg}"),
+                    Err(err) => eprintln!("PROSPECT_AUDIO_AUTOSTART_FAIL {err}"),
+                }
+            }
             let script = tracker::load_script().unwrap_or_else(|e| panic!("{e}"));
             println!(
                 "SCRIPT_LOADED '{}' lines={}",

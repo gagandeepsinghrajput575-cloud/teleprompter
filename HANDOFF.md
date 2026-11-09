@@ -108,6 +108,31 @@ call is committed**:
 Verified: a Node `fetch` (the dialer's mechanism) produces `{"ok":true}` and the log shows
 `CALL_CONTEXT … script=Some("coldcall")` then `SCRIPT_SWITCHED to 'Cold Call: Scalix Elite'`.
 
+## Prospect (system-audio) tap — how the AI suggests the reply
+Goal: hear the **prospect**, not just you, without touching Pulse Dialer.
+
+- `src-tauri/src/system_audio.m` — ScreenCaptureKit stream, audio only (2×2 surface, no video
+  output), 48 kHz stereo → mono `int16` in C. Reads what macOS is already playing; never touches
+  the microphone or the dialer's audio routing.
+- `src-tauri/src/system_audio.rs` — FFI + channel, plus `prospect_status` events.
+- A **second** `apple_stt::run` consumes that channel, so prospect speech can never move your line.
+- `src-tauri/src/objection_detect.rs` — keyword tier-0 classifier: normalisation, word-boundary
+  phrases, weights, ties to the more specific rule, 12 s per-index cooldown. Returns the ⌃N index.
+- `lib.rs` emits the existing `objection` event → the battlecard appears by itself. ⌘⇧⌥D dismisses.
+- HUD: `👂 Prospect audio` toggle plus a dim `👂 …` echo of what it is hearing (own component, so
+  it never re-renders the script).
+
+Permissions (one-time per signature):
+1. Click the toggle → macOS asks for **Speech** (ad-hoc re-signing re-asks after each rebuild).
+2. Then **Screen & System Audio Recording** (`kTCCServiceAudioCapture`) → allow; relaunch if asked.
+3. Toggle again. The `settings` link opens that exact pane.
+
+Diagnostics: `STEALTH_PROSPECT_AUDIO=1` starts the tap at launch; log lines are
+`PROSPECT_AUDIO_STATUS`, `PROSPECT_STT_READY`, `PROSPECT_AUDIO_FIRST`, `PROSPECT_OBJECTION`.
+
+Caveats: it taps the **whole** system output (music would be transcribed too) and two concurrent
+Speech tasks are unproven across long calls. Per-app Core Audio process taps are the follow-up.
+
 ## Known limitations / places it can fail
 1. **Ad-hoc signing** (`signingIdentity "-"`): macOS **re-prompts Speech Recognition after every
    rebuild**. Click Allow. A self-signed certificate (see `docs/architecture.md`) would persist.
@@ -115,8 +140,11 @@ Verified: a Node `fetch` (the dialer's mechanism) produces `{"ok":true}` and the
    maximised window. Tray shows ⚠️ when it thinks it is off-Space.
 3. **SpeechAnalyzer not integrated** (legacy recogniser): latency is limited by its warm-up and
    interim cadence. ~0.2 s end-of-speech is the target once migrated.
-4. **Prospect audio + auto objection suggestion NOT built.** Requires ScreenCaptureKit (Screen
-   Recording permission) + a second STT stream + classifier. No local LLM on 8 GB.
+4. **Prospect audio tap is built but needs a one-time grant.** ScreenCaptureKit + a second STT
+   stream + keyword classifier are wired (`src-tauri/src/system_audio.m`, `system_audio.rs`,
+   `objection_detect.rs`), but macOS requires **Screen & System Audio Recording**
+   (`kTCCServiceAudioCapture`) for THIS app. Until granted, the stream starts but delivers no audio.
+   Ad-hoc signing also re-prompts **Speech** after every rebuild.
 5. **Jev stage-2 is unconfigured** (no `JEV_API_KEY`; Deepgram key is present). Stage 2 stays off.
 6. **Mutex `.lock().unwrap()` throughout**: a panic while holding a lock would poison it and later
    commands would panic. Low risk (tracker is panic-tested) but a known sharp edge.
@@ -130,9 +158,9 @@ Verified: a Node `fetch` (the dialer's mechanism) produces `{"ok":true}` and the
 ## Next steps (priority order)
 1. Migrate the Apple engine to **SpeechAnalyzer/SpeechTranscriber** (Swift bridge compiled via
    `build.rs`, legacy fallback) → ~0.2 s and word timings.
-2. **Prospect audio capture** (ScreenCaptureKit) → keyword classifier → suggestion chip + accept
-   key (⌥V, or a guarded Accessibility event tap if bare keys are required).
-3. HUD GPU trim (WebKit GPU ~100% CPU).
+2. **Prospect tap follow-ups:** per-app Core Audio process tap (so only the dialer is heard), an
+   LLM tier on ambiguous objections, and a confirm chip instead of showing the card immediately.
+3. HUD GPU trim — done: high-frequency updates isolated, `font-size` animation removed; idle GPU 0%.
 4. Push policy: move scripts out of the public repo or use a private remote before pushing.
 5. Optional: self-signed certificate to stop the Speech TCC re-prompts.
 
@@ -146,6 +174,6 @@ Verified: a Node `fetch` (the dialer's mechanism) produces `{"ok":true}` and the
   `STEALTH_VERBOSE=1` to restore `TRACKER_ROUTE` / `TRACKER_RETAIN` lines when diagnosing.
 
 ## Test counts / current health
-63 Rust tests · 24 Vitest · clippy + fmt + typecheck clean · `tauri build EXIT=0`.
+75 Rust tests · 24 Vitest · clippy + fmt + typecheck clean · `tauri build EXIT=0`.
 Last live check: `/health` 200, valid context 200, bad JSON 400, browser Origin 403, app running.
 

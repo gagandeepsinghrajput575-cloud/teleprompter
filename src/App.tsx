@@ -54,6 +54,18 @@ function LevelMeter() {
   );
 }
 
+/** Shows what the tap is hearing from the call; own listener so it never re-renders the HUD. */
+function ProspectEcho() {
+  const [text, setText] = useState("");
+  useEffect(() => {
+    const un = listen<string>("prospect_transcript", (e) => setText(e.payload));
+    return () => {
+      un.then((off) => off());
+    };
+  }, []);
+  return <div className="prospect-echo">👂 {text || "listening to the call…"}</div>;
+}
+
 export default function App() {
   const [selectedCall, setSelectedCall] = useState<"call1" | "call2" | "coldcall" | null>(null);
   const [script, setScript] = useState<Script>(call1Script);
@@ -77,6 +89,9 @@ export default function App() {
 
   // Objection battlecard currently shown (⌃0–⌃9), and the prospect context card fields.
   const [objection, setObjection] = useState<Objection | null>(null);
+  // Selects the prospect's audio (the dialer call) and the note the backend reports for it.
+  const [prospectAudio, setProspectAudio] = useState(false);
+  const [prospectNote, setProspectNote] = useState("");
   const [prospect, setProspect] = useState<{ name: string; company: string; niche: string }>(() => {
     try {
       const raw = localStorage.getItem("tp.prospect");
@@ -106,6 +121,17 @@ export default function App() {
     return () => {
       onShow.then((off) => off());
       onClose.then((off) => off());
+    };
+  }, []);
+
+  // The backend reports whether the system-audio (prospect) tap actually started, and why not.
+  useEffect(() => {
+    const un = listen<{ running: boolean; message: string }>("prospect_status", (e) => {
+      setProspectAudio(e.payload.running);
+      setProspectNote(e.payload.message);
+    });
+    return () => {
+      un.then((off) => off());
     };
   }, []);
 
@@ -254,6 +280,23 @@ export default function App() {
       }
     }
   }, [engine, status.running, chooseEngine, device]);
+
+  // Toggle the prospect (system-audio) tap. Fully additive: the mic session keeps running either
+  // way, and a permission refusal is reported back without breaking anything.
+  const toggleProspectAudio = useCallback(async () => {
+    if (prospectAudio) {
+      await invoke("system_audio_stop").catch(() => undefined);
+      setProspectAudio(false);
+      setProspectNote("prospect audio off");
+      return;
+    }
+    try {
+      const note = await invoke<string>("system_audio_start");
+      setProspectNote(note);
+    } catch (e) {
+      setProspectNote(String(e));
+    }
+  }, [prospectAudio]);
 
   // Input devices list.
   useEffect(() => {
@@ -594,6 +637,29 @@ export default function App() {
           )}
 
           <LevelMeter />
+
+          <div className="prospect-row">
+            <button
+              type="button"
+              className={`prospect-toggle ${prospectAudio ? "on" : ""}`}
+              onClick={toggleProspectAudio}
+              title="Listen to the prospect's side of the call (needs Screen & System Audio Recording)"
+            >
+              {prospectAudio ? "👂 Prospect audio ON" : "👂 Prospect audio OFF"}
+            </button>
+            {prospectNote && <span className="prospect-note">{prospectNote}</span>}
+            {!prospectAudio && (
+              <button
+                type="button"
+                className="prospect-settings"
+                onClick={() => invoke("open_screen_settings").catch(() => undefined)}
+                title="Open Screen & System Audio Recording settings"
+              >
+                settings
+              </button>
+            )}
+          </div>
+          {prospectAudio && <ProspectEcho />}
 
           <div className="blocks" ref={blocksRef}>
             {script.lines.map((line, i) => {

@@ -179,6 +179,59 @@ body {
   transition: width 120ms linear;
 }
 
+/* Prospect (system-audio) tap: a small, quiet row so it never competes with the script. */
+.prospect-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9px;
+  opacity: 0.75;
+}
+
+.prospect-toggle {
+  font: inherit;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.prospect-toggle.on {
+  color: #0d0d0d;
+  background: #d4af37;
+  border-color: #d4af37;
+}
+
+.prospect-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.7;
+}
+
+.prospect-settings {
+  font: inherit;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.45);
+  background: none;
+  border: none;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 0;
+}
+
+.prospect-echo {
+  font-size: 9px;
+  line-height: 1.3;
+  opacity: 0.55;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
 .blocks {
   flex: 1;
   min-height: 0;

@@ -1,14 +1,24 @@
 # StealthPrompter
 
-> **New here? Read [`README_FIRST.md`](README_FIRST.md) first.** It is a plain-English summary of
-> the latest changes (bare number keys, hearing the prospect, speed) and the one-time permissions.
-> This file is the full technical reference.
-
 A transparent, click-through, screen-share-invisible HUD for macOS that follows your sales script in real time as you talk. It listens to your microphone, transcribes speech with zero latency, and moves the highlight to the exact line you are delivering — through paraphrase, tangents, pauses, and interruptions — with no mouse clicking required.
 
 The window is excluded from screen capture (`NSWindowSharingNone`), so your script is completely invisible on Zoom, Google Meet, Microsoft Teams, Loom, and OBS.
 
 Built with **Tauri v2.12** (Rust + Objective-C) + **React 19** / **Vite 8** / **TypeScript**.
+
+---
+
+## What changed (latest)
+
+| Area | Change |
+|---|---|
+| **Bare number keys** | `1`–`9` / `0` show the matching objection card with **no Control key**. Toggle `1–0 Bare keys` in the HUD. Works only while listening; needs Accessibility. |
+| **Prospect audio** | The `👂 Prospect audio` toggle transcribes the dialer call and opens the matching card by itself (keyword match, ~1–2 s). Needs Speech + Screen & System Audio Recording. |
+| **Speed** | High-frequency updates are isolated and `font-size` is no longer animated. Idle: WebKit GPU ~0% (was ~100%), app 0.3% CPU / 28 MB. |
+| **Dialer link** | Hardened only: browser requests get `403`, malformed JSON `400`, one thread per connection. Behaviour is unchanged, and the dialer repo was not touched. |
+
+Permissions are granted once per install — and again after each rebuild, because the app is signed
+ad-hoc. Deeper notes: [`HANDOFF.md`](HANDOFF.md).
 
 ---
 

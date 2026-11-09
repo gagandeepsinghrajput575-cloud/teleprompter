@@ -15,6 +15,7 @@ use std::time::Instant;
 /// Embedded so the shipped app never depends on the repo layout at runtime.
 const CALL1_SCRIPT_JSON: &str = include_str!("../../src/fixtures/call1_audit_script.json");
 const CALL2_SCRIPT_JSON: &str = include_str!("../../src/fixtures/call2_sales_script.json");
+const COLD_CALL_SCRIPT_JSON: &str = include_str!("../../src/fixtures/coldcall_scalix.json");
 const LEGACY_SCRIPT_JSON: &str = include_str!("../../src/fixtures/remodeler_script.json");
 
 /// How many trailing words of finalized speech the classifier sees.
@@ -138,6 +139,7 @@ fn is_delivery_marker(token: &str) -> bool {
 pub fn load_script_by_type(call_type: &str) -> Result<ScriptFile, String> {
     let json = match call_type {
         "call2" | "sales" | "close" | "2" => CALL2_SCRIPT_JSON,
+        "coldcall" | "cold" | "scalix" => COLD_CALL_SCRIPT_JSON,
         "legacy" | "remodeler" => LEGACY_SCRIPT_JSON,
         _ => CALL1_SCRIPT_JSON,
     };
@@ -984,6 +986,26 @@ mod tests {
         assert_eq!(call2.lines.len(), 24);
         assert_eq!(call2.lines[0].id, 1);
         assert_eq!(call2.lines[23].id, 24);
+    }
+
+    #[test]
+    fn coldcall_fixture_loads_with_name_and_niche_placeholders() {
+        let cold = load_script_by_type("coldcall").unwrap();
+        assert_eq!(cold.lines.len(), 14);
+        assert_eq!(cold.lines[0].id, 1);
+        assert!(cold.lines.iter().any(|l| l.body.contains("[Name]")));
+        assert!(cold.lines.iter().any(|l| l.body.contains("[Niche]")));
+    }
+
+    #[test]
+    fn coldcall_placeholders_are_not_counted_as_spoken_words() {
+        let cold = load_script_by_type("coldcall").unwrap();
+        let hook = cold.lines.iter().find(|l| l.id == 5).unwrap();
+        let words = spoken_content(&hook.raw);
+        assert!(
+            !words.iter().any(|w| w == "name" || w == "niche"),
+            "placeholders must not enter the matching vocabulary: {words:?}"
+        );
     }
 
     #[test]

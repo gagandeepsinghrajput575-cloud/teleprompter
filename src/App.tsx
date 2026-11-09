@@ -7,16 +7,18 @@ import { objectionFor, type Objection } from "./lib/objections";
 import { loadScript, type Script } from "./lib/script";
 import call1Fixture from "./fixtures/call1_audit_script.json";
 import call2Fixture from "./fixtures/call2_sales_script.json";
+import coldcallFixture from "./fixtures/coldcall_scalix.json";
 
 const call1Script = loadScript(call1Fixture as never);
 const call2Script = loadScript(call2Fixture as never);
+const coldCallScript = loadScript(coldcallFixture as never);
 
 type StatusEvent = { running: boolean; message: string };
 type TranscriptEvent = { text: string; is_final: boolean };
 type ActiveBlockEvent = { id: number; reason: string };
 
 export default function App() {
-  const [selectedCall, setSelectedCall] = useState<"call1" | "call2" | null>(null);
+  const [selectedCall, setSelectedCall] = useState<"call1" | "call2" | "coldcall" | null>(null);
   const [script, setScript] = useState<Script>(call1Script);
   const [activeId, setActiveId] = useState(call1Script.lines[0]?.id ?? 1);
   const [reason, setReason] = useState("start");
@@ -79,8 +81,9 @@ export default function App() {
     const apply = (p: Inbound | null) => {
       if (!p) return;
       setProspect({ name: p.name ?? "", company: p.company ?? "", niche: p.niche ?? "" });
-      if (p.script === "call1" || p.script === "call2") {
-        const chosen = p.script === "call2" ? call2Script : call1Script;
+      if (p.script === "call1" || p.script === "call2" || p.script === "coldcall") {
+        const chosen =
+          p.script === "call2" ? call2Script : p.script === "coldcall" ? coldCallScript : call1Script;
         setSelectedCall(p.script);
         setScript(chosen);
         setActiveId(chosen.lines[0]?.id ?? 1);
@@ -188,9 +191,10 @@ export default function App() {
   }, [device, engine]);
 
   const selectCall = useCallback(
-    async (type: "call1" | "call2", chosenDevice?: string | null) => {
+    async (type: "call1" | "call2" | "coldcall", chosenDevice?: string | null) => {
       setSelectedCall(type);
-      const chosen = type === "call1" ? call1Script : call2Script;
+      const chosen =
+        type === "call1" ? call1Script : type === "call2" ? call2Script : coldCallScript;
       setScript(chosen);
       setActiveId(chosen.lines[0]?.id ?? 1);
       try {
@@ -333,6 +337,10 @@ export default function App() {
     if (name) out = out.replace(/\[Name\]/gi, () => name);
     if (company) out = out.replace(/\[Company\]/gi, () => company);
     if (niche) out = out.replace(/\[Niche\]/gi, () => niche);
+    const first = name.split(/\s+/)[0] ?? "";
+    if (first) out = out.replace(/\[firstname\]/gi, () => first);
+    const domain = company.toLowerCase().replace(/[^a-z0-9]+/g, "");
+    if (domain) out = out.replace(/\[company domain\]/gi, () => domain);
     return out;
   };
 
@@ -479,6 +487,13 @@ export default function App() {
             </div>
           </button>
 
+          <button className="call-card" onClick={() => selectCall("coldcall")}>
+            <div className="call-card-name">📞 Cold Call: Scalix Elite</div>
+            <div className="call-card-desc">
+              Opening · Hook & Assumption · Leak & Offer · Lock the Time · Email & Sign-off
+            </div>
+          </button>
+
           <div className="mic-selection-box">
             <span className="mic-selection-label">🎙️ Microphone Input:</span>
             <select
@@ -526,7 +541,11 @@ export default function App() {
               onClick={() => setSelectedCall(null)}
               title="Click to switch call"
             >
-              {selectedCall === "call1" ? "🔍 Audit (Call 1) ▾" : "💼 Close (Call 2) ▾"}
+              {selectedCall === "call1"
+                ? "🔍 Audit (Call 1) ▾"
+                : selectedCall === "call2"
+                  ? "💼 Close (Call 2) ▾"
+                  : "📞 Cold Call ▾"}
             </button>
             <button
               className="engine-pill"

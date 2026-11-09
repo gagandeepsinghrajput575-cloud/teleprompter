@@ -1,5 +1,9 @@
 # StealthPrompter
 
+> **New here? Read [`README_FIRST.md`](README_FIRST.md) first.** It is a plain-English summary of
+> the latest changes (bare number keys, hearing the prospect, speed) and the one-time permissions.
+> This file is the full technical reference.
+
 A transparent, click-through, screen-share-invisible HUD for macOS that follows your sales script in real time as you talk. It listens to your microphone, transcribes speech with zero latency, and moves the highlight to the exact line you are delivering — through paraphrase, tangents, pauses, and interruptions — with no mouse clicking required.
 
 The window is excluded from screen capture (`NSWindowSharingNone`), so your script is completely invisible on Zoom, Google Meet, Microsoft Teams, Loom, and OBS.

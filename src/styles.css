@@ -43,7 +43,7 @@ body {
   line-height: 1.32;
   color: #ffffff;
   text-shadow: 0 2px 4px rgba(0, 0, 0, 0.9);
-  transition: opacity 220ms ease, font-size 220ms ease;
+  transition: opacity 220ms ease;
 }
 
 /* The active line is centred, so already-read lines stay visible above it at 50% and

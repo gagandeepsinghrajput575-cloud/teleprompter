@@ -17,14 +17,49 @@ type StatusEvent = { running: boolean; message: string };
 type TranscriptEvent = { text: string; is_final: boolean };
 type ActiveBlockEvent = { id: number; reason: string };
 
+/** Owns the transcript subscription so 120ms updates never re-render the whole script list. */
+function SpokenText() {
+  const [text, setText] = useState("");
+  useEffect(() => {
+    const latest = { current: "" };
+    const unlisten = listen<TranscriptEvent>("transcript", (e) => {
+      latest.current = e.payload.text;
+    });
+    const id = window.setInterval(() => {
+      setText((prev) => (prev === latest.current ? prev : latest.current));
+    }, 150);
+    return () => {
+      unlisten.then((off) => off());
+      window.clearInterval(id);
+    };
+  }, []);
+  return <span className="spoken">{text || "waiting for speech"}</span>;
+}
+
+/** Owns the level polling so the meter tick cannot re-render the HUD. */
+function LevelMeter() {
+  const [level, setLevel] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      invoke<number>("audio_level")
+        .then(setLevel)
+        .catch(() => undefined);
+    }, 200);
+    return () => window.clearInterval(id);
+  }, []);
+  return (
+    <div className="meter">
+      <div className="meter-fill" style={{ width: `${Math.min(100, level * 400)}%` }} />
+    </div>
+  );
+}
+
 export default function App() {
   const [selectedCall, setSelectedCall] = useState<"call1" | "call2" | "coldcall" | null>(null);
   const [script, setScript] = useState<Script>(call1Script);
   const [activeId, setActiveId] = useState(call1Script.lines[0]?.id ?? 1);
   const [reason, setReason] = useState("start");
   const [status, setStatus] = useState<StatusEvent>({ running: false, message: "idle" });
-  const [spoken, setSpoken] = useState("");
-  const [level, setLevel] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -149,29 +184,8 @@ export default function App() {
     };
   }, []);
 
-  const spokenRef = useRef("");
-  useEffect(() => {
-    const unlisten = listen<TranscriptEvent>("transcript", (e) => {
-      spokenRef.current = e.payload.text;
-    });
-    const id = window.setInterval(() => {
-      setSpoken((prev) => (prev === spokenRef.current ? prev : spokenRef.current));
-    }, 120);
-    return () => {
-      unlisten.then((off) => off());
-      window.clearInterval(id);
-    };
-  }, []);
-
-  // Level meter polled from the capture callback.
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      invoke<number>("audio_level")
-        .then(setLevel)
-        .catch(() => undefined);
-    }, 150);
-    return () => window.clearInterval(id);
-  }, []);
+  // The transcript and level subscriptions live in SpokenText/LevelMeter so their high-frequency
+  // updates cannot re-render the whole script list.
 
   const start = useCallback(async () => {
     setBusy(true);
@@ -579,9 +593,7 @@ export default function App() {
             </div>
           )}
 
-          <div className="meter">
-            <div className="meter-fill" style={{ width: `${Math.min(100, level * 400)}%` }} />
-          </div>
+          <LevelMeter />
 
           <div className="blocks" ref={blocksRef}>
             {script.lines.map((line, i) => {
@@ -614,7 +626,7 @@ export default function App() {
           </div>
 
           <div className="footer">
-            <span className="spoken">{spoken || "waiting for speech"}</span>
+            <SpokenText />
             <span>
               {active ? active.id : 1}/{script.lines.length}
             </span>

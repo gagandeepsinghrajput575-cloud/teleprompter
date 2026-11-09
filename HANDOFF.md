@@ -136,6 +136,15 @@ Verified: a Node `fetch` (the dialer's mechanism) produces `{"ok":true}` and the
 4. Push policy: move scripts out of the public repo or use a private remote before pushing.
 5. Optional: self-signed certificate to stop the Speech TCC re-prompts.
 
+## Performance profile (measured)
+- Idle HUD after optimisation: Rust shell 0.3% CPU / 28 MB RSS; WebKit **GPU 0.0%**,
+  WebContent 0.6% (~14 MB). Previously the GPU process sat near 100%.
+- High-frequency updates are isolated: `SpokenText` owns the transcript listener (150 ms) and
+  `LevelMeter` owns `audio_level` polling (200 ms), so neither re-renders the 31-line list.
+- `font-size` is **not** transitioned (it forced layout every animation frame); only opacity animates.
+- Per-cycle routing logs are off by default (they wrote a line per interim word). Set
+  `STEALTH_VERBOSE=1` to restore `TRACKER_ROUTE` / `TRACKER_RETAIN` lines when diagnosing.
+
 ## Test counts / current health
 63 Rust tests · 24 Vitest · clippy + fmt + typecheck clean · `tauri build EXIT=0`.
 Last live check: `/health` 200, valid context 200, bad JSON 400, browser Origin 403, app running.

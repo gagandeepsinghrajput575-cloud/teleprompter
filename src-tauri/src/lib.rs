@@ -556,6 +556,9 @@ fn begin_session(
     tauri::async_runtime::spawn(async move {
         let mut llm_failures: u32 = 0;
         let mut last_llm: Option<std::time::Instant> = None;
+        // Routing decisions are logged on every interim word, which is a lot of file I/O during a
+        // call. Opt in with STEALTH_VERBOSE=1 when diagnosing.
+        let verbose = std::env::var("STEALTH_VERBOSE").is_ok();
         while let Some(event) = stt_rx.recv().await {
             let transcript = match event {
                 stt::SttEvent::Connected => {
@@ -658,10 +661,10 @@ fn begin_session(
                                 eprintln!("TRACKER_JEV_ERROR n={llm_failures} {err}");
                             }
                         }
-                    } else {
+                    } else if verbose {
                         println!("TRACKER_ROUTE stage1-local (llm throttled or circuit open)");
                     }
-                } else {
+                } else if verbose {
                     println!("TRACKER_ROUTE stage1-local (no jev key)");
                 }
                 if let Some(id) = proposal {
@@ -683,7 +686,7 @@ fn begin_session(
                             "TRACKER_RETAIN active={active} reason=llm-out-of-bounds proposed={id}"
                         );
                     }
-                } else {
+                } else if verbose {
                     // Ambiguous or off-script and no model verdict: hold position.
                     println!(
                         "TRACKER_RETAIN active={active} reason=no-model-decision buffer_words={}",

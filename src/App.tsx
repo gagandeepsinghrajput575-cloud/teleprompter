@@ -419,7 +419,11 @@ export default function App() {
     const name = prospect.name.trim();
     const company = prospect.company.trim();
     const niche = prospect.niche.trim();
-    if (name) out = out.replace(/\[Name\]/gi, () => name);
+    if (name) {
+      out = out.replace(/\[Name\]/gi, () => name);
+      out = out.replace(/\[Prospect Name\]/gi, () => name);
+      out = out.replace(/\[Owner's First Name\]/gi, () => name);
+    }
     if (company) out = out.replace(/\[Company\]/gi, () => company);
     if (niche) out = out.replace(/\[Niche\]/gi, () => niche);
     const first = name.split(/\s+/)[0] ?? "";

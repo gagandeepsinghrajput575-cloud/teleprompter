@@ -1009,6 +1009,36 @@ mod tests {
     }
 
     #[test]
+    fn coldcall_new_opener_and_greeting_match_cleanly() {
+        let cold = load_script_by_type("coldcall").unwrap();
+        let mut t = Tracker::new(cold.lines).unwrap();
+
+        // Line 1: New Opener
+        t.push_text("John hi it's Gagan from Scalix Elite");
+        let (id1, confident1, _) = t.local_match().expect("should match line 1");
+        assert_eq!(id1, 1);
+        assert!(confident1);
+
+        // Advance to Turn 2 (Line 4)
+        t.consider(4, true);
+        assert_eq!(t.active_id(), 4);
+
+        // Line 4: Job site variant
+        t.reanchor();
+        t.push_text("You're not in the middle of a job site right now are you");
+        let (id4_job, confident4_job, _) = t.local_match().expect("should match line 4 job site");
+        assert_eq!(id4_job, 4);
+        assert!(confident4_job);
+
+        // Line 4: Viewing variant
+        t.reanchor();
+        t.push_text("You're not in the middle of a viewing right now are you");
+        let (id4_view, confident4_view, _) = t.local_match().expect("should match line 4 viewing");
+        assert_eq!(id4_view, 4);
+        assert!(confident4_view);
+    }
+
+    #[test]
     fn annotation_stripping_keeps_placeholders_and_drops_markers() {
         let script = load_script_by_type("call1").unwrap();
         let first = script.lines.iter().find(|l| l.id == 1).unwrap();

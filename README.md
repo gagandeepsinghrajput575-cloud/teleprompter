@@ -192,7 +192,44 @@ src/
 
 `start_session`, `stop_session`, `list_devices`, `key_status`, `script_lines`, `tracker_snapshot`,
 `nudge`, `audio_level`, `hud_state`, `hud_report`, `set_click_through`, `open_mic_settings`,
-`input_probe`, `drag_probe`.
+`input_probe`, `drag_probe`, `call_context`, `clear_call_context`.
+
+### Dialer intake (Pulse)
+
+Pulse dials the business owner, so the name it sends is both the *prospect* and the *owner*: one
+name fills `[Prospect Name]` and `[Owner's First Name]` everywhere in the flowchart and the list.
+The intake lives in `lead.rs`.
+
+```
+POST http://127.0.0.1:47831/lead
+content-type: application/json
+
+{"name": "Mike"}
+```
+
+Also accepted: `owner_name`, `ownerName`, `owner`, `prospect_name`, `prospect`, `first_name`,
+`firstName` — so the dialer does not have to be reconfigured to match this app. The name is
+flattened to one line and cut at 48 characters before it is ever rendered.
+
+Check it without the dialer:
+
+```bash
+curl -s -X POST http://127.0.0.1:47831/lead -H 'content-type: application/json' -d '{"name":"Mike"}'
+# {"ok":true}
+```
+
+Guardrails, because a loopback port is reachable by every process on the machine *and* by any web
+page via `fetch()`:
+
+| Guard | Why |
+|---|---|
+| binds `127.0.0.1` only, one route | nothing is exposed off the machine |
+| refuses any request with `Origin` or `Referer` | browsers always send one, a native dialer never does |
+| optional `X-Stealth-Token`, set via `STEALTH_LEAD_TOKEN` | shared secret for a dialer that can send a header |
+| body capped at 4 KB, 3 s socket timeouts | one half-open connection cannot pin the accept loop |
+| handled sequentially | a flood of connections cannot spawn threads without limit |
+
+A failure to bind is logged and ignored: the HUD stays fully usable without a dialer.
 
 ### Files on disk
 
@@ -321,12 +358,18 @@ instead of assumed.
 | `STEALTH_DRAG_TEST` | post a full drag gesture and assert the window actually moved |
 | `STEALTH_FOCUS_TEST` | activate Chrome, then report whether the HUD is still on screen |
 | `STEALTH_FULLSCREEN_TEST` | put Chrome in fullscreen and measure again |
+| `STEALTH_LEAD_PORT` | port for the dialer intake (default `47831`) |
+| `STEALTH_LEAD_TOKEN` | require `X-Stealth-Token` on the dialer intake |
 
 ### Log lines worth knowing
 
 | Line | Meaning |
 |---|---|
 | `MIC_PERMISSION status=…` | `authorized` / `denied` / `not-determined` |
+| `LEAD_READY http://127.0.0.1:…/lead` | dialer intake is listening |
+| `LEAD_LISTENER_ERROR …` | intake disabled (port busy) — the HUD still works |
+| `CALL_CONTEXT name=Some("Mike")` | the dialer's name was accepted and pushed to the HUD |
+| `LEAD_ERROR …` | a request was refused or malformed; the reason is in the line |
 | `AUDIO_STARTED device=…` | capture opened, with real rate/channels/format |
 | `AUDIO_STATS rms=…` | once a second while listening |
 | `AUDIO_SILENT` | 3 s of pure zeros — no signal, wrong device, or no permission |

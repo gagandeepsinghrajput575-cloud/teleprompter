@@ -15,9 +15,9 @@
       {
         "label": "hud",
         "title": "StealthPrompter",
-        "width": 320,
-        "height": 300,
-        "resizable": false,
+        "width": 1080,
+        "height": 720,
+        "resizable": true,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,

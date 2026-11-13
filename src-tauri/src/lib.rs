@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 
 mod audio;
 mod keys;
+mod lead;
 #[cfg(target_os = "macos")]
 mod mic_permission;
 mod stt;
@@ -33,6 +34,16 @@ static TRAY: Mutex<Option<tauri::tray::TrayIcon>> = Mutex::new(None);
 /// True while the HUD is not on the Space the user is looking at — i.e. they are in another
 /// app's native fullscreen Space, where macOS will not show us.
 static OFF_ACTIVE_SPACE: AtomicBool = AtomicBool::new(false);
+
+/// Locks a mutex, recovering from poisoning instead of panicking.
+///
+/// If anything panicked while a lock was held (a bad ID, an allocation failure), that mutex is
+/// poisoned and a plain `unwrap()` makes *every* later command panic too - the HUD would go
+/// permanently deaf halfway through a call. Losing one write is far cheaper than losing the app,
+/// and there is no invariant here that a half-applied write can break.
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Mirrors the current input mode into the menu bar title and tooltip.
 fn refresh_tray() {
@@ -81,6 +92,10 @@ struct AppState {
     /// a quick restart reset it before the old producer observed it.
     stop: Mutex<Option<Arc<AtomicBool>>>,
     audio_tx: Mutex<Option<mpsc::UnboundedSender<Vec<i16>>>>,
+    /// The business owner's name for the call in progress, as injected by the dialer. One name
+    /// serves both placeholders: the dialer dials the owner, so "prospect" and "owner" are the
+    /// same person.
+    context: Mutex<Option<String>>,
     http: reqwest::Client,
 }
 
@@ -101,6 +116,11 @@ struct ActiveBlock {
 struct StatusEvent {
     running: bool,
     message: String,
+}
+
+#[derive(Clone, serde::Serialize)]
+struct CallContextEvent {
+    name: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -339,7 +359,7 @@ fn input_probe(kind: String) {
 }
 
 fn emit_active(app: &tauri::AppHandle, tracker: &Arc<Mutex<Tracker>>, id: i32, reason: &str) {
-    let guard = tracker.lock().unwrap();
+    let guard = lock(tracker);
     if let Some(line) = guard.lines().iter().find(|l| l.id == id) {
         println!(
             "ACTIVE_LINE id={} label='{}' reason={reason}",
@@ -356,6 +376,12 @@ fn emit_active(app: &tauri::AppHandle, tracker: &Arc<Mutex<Tracker>>, id: i32, r
             },
         );
     }
+}
+
+/// Tells the HUD which name this call is for. `None` clears it back to the raw placeholders.
+fn emit_context(app: &tauri::AppHandle, name: Option<String>) {
+    println!("CALL_CONTEXT name={:?}", name);
+    let _ = app.emit("call_context", CallContextEvent { name });
 }
 
 fn emit_status(app: &tauri::AppHandle, running: bool, message: impl Into<String>) {
@@ -398,12 +424,58 @@ fn spawn_capture(
 
 /// Starts a session. Kept separate from the command so the app can also autostart
 /// headlessly during verification (`STEALTH_AUTOSTART=1`).
+///
+/// The stop flag doubles as the session token, and it is claimed *before* the capture
+/// handshake. Checking the audio sender alone left a ten-second window in which a second
+/// Start click looked like a fresh session: two capture threads, two microphone claims and
+/// two billed Deepgram sockets for one call.
 fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<SessionInfo, String> {
     let state = app.state::<AppState>();
+    let stop = {
+        let mut slot = lock(&state.stop);
+        if slot.is_some() {
+            return Err("a session is already running".to_string());
+        }
+        let stop = Arc::new(AtomicBool::new(false));
+        *slot = Some(stop.clone());
+        stop
+    };
 
-    if state.audio_tx.lock().unwrap().is_some() {
-        return Err("a session is already running".to_string());
+    let outcome = start_session_inner(app, &state, device, stop);
+
+    // Stop pressed while the device was still opening: the token is gone, so this session is
+    // already over. Tear the producer down rather than leaving the HUD claiming to be listening
+    // with nothing behind it, and make the frontend say so.
+    if outcome.is_ok() && lock(&state.stop).is_none() {
+        lock(&state.audio_tx).take();
+        state.level.store(0.0f32.to_bits(), Ordering::Relaxed);
+        emit_status(app, false, "stopped while starting");
+        return Err("stopped while starting".to_string());
     }
+
+    if outcome.is_err() {
+        // A failed start must leave nothing behind. Raising the flag makes a capture thread that
+        // arrives late exit immediately rather than holding the microphone for the rest of the
+        // process lifetime, and clearing the slot lets the next attempt try again.
+        if let Some(stop) = lock(&state.stop).take() {
+            stop.store(true, Ordering::Relaxed);
+        }
+        lock(&state.audio_tx).take();
+        state.level.store(0.0f32.to_bits(), Ordering::Relaxed);
+    }
+    outcome
+}
+
+fn start_session_inner(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    device: Option<String>,
+    stop: Arc<AtomicBool>,
+) -> Result<SessionInfo, String> {
+    // A level left over from a previous session is poison: `replay_wav` ends with the NaN
+    // sentinel, and the watchdog treats NaN as "source closed", so it would quit on its first
+    // tick of the *next* session and never report a silent microphone again.
+    state.level.store(0.0f32.to_bits(), Ordering::Relaxed);
 
     let deepgram =
         keys::get("DEEPGRAM_API_KEY").ok_or("DEEPGRAM_API_KEY not found in env or Keychain")?;
@@ -416,9 +488,6 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
             .map(keys::mask)
             .unwrap_or_else(|| "missing".to_string())
     );
-
-    let stop = Arc::new(AtomicBool::new(false));
-    *state.stop.lock().unwrap() = Some(stop.clone());
 
     let (audio_tx, audio_rx) = mpsc::unbounded_channel();
     // Simulated Call Mode: replay a 16 kHz mono WAV through the real Deepgram socket.
@@ -433,8 +502,7 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
             spawn_capture(device, audio_tx.clone(), state.level.clone(), stop.clone())?
         }
     };
-    *state.audio_tx.lock().unwrap() = Some(audio_tx);
-
+    *lock(&state.audio_tx) = Some(audio_tx);
     let (stt_tx, mut stt_rx) = mpsc::unbounded_channel();
     tauri::async_runtime::spawn(async move {
         stt::run(deepgram, audio_rx, stt_tx).await;
@@ -519,7 +587,7 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
             // Stage 0: interims count too. Waiting for Deepgram to finalize the sentence is
             // exactly what made the highlight arrive when the line was mostly already spoken.
             let plan = {
-                let mut tr = tracker_arc.lock().unwrap();
+                let mut tr = lock(&tracker_arc);
                 if transcript.is_final {
                     println!("STT_FINAL \"{}\"", transcript.text);
                     tr.push_text(&transcript.text);
@@ -577,6 +645,16 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
                                 eprintln!("TRACKER_LLM_ERROR n={llm_failures} {err}");
                             }
                         }
+                        // The breaker state is part of the tracker snapshot. It used to live only
+                        // in this local counter, so the HUD reported `llm_enabled: true` while the
+                        // model had already been switched off for the rest of the call.
+                        let healthy = llm_failures < 3;
+                        let mut tr = lock(&tracker_arc);
+                        if tr.llm_enabled != healthy {
+                            tr.llm_enabled = healthy;
+                            println!("TRACKER_LLM_ENABLED {healthy}");
+                        }
+                        drop(tr);
                     } else {
                         println!("TRACKER_ROUTE stage1-local (llm throttled or circuit open)");
                     }
@@ -584,7 +662,7 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
                     println!("TRACKER_ROUTE stage1-local (no deepseek key)");
                 }
                 if let Some(id) = proposal {
-                    if let Some(new_id) = tracker_arc.lock().unwrap().consider(id, false) {
+                    if let Some(new_id) = lock(&tracker_arc).consider(id, false) {
                         committed = Some((
                             new_id,
                             if decided_by_llm {
@@ -603,7 +681,7 @@ fn begin_session(app: &tauri::AppHandle, device: Option<String>) -> Result<Sessi
                 }
             } else if let Some((id, _, _)) = local {
                 // Stage 1 was unambiguous: commit without paying for a model call.
-                if let Some(new_id) = tracker_arc.lock().unwrap().consider(id, true) {
+                if let Some(new_id) = lock(&tracker_arc).consider(id, true) {
                     committed = Some((new_id, "stage1-local"));
                 }
             }
@@ -629,7 +707,12 @@ async fn start_session(
     app: tauri::AppHandle,
     device: Option<String>,
 ) -> Result<SessionInfo, String> {
-    begin_session(&app, device)
+    // Opening the device blocks until the capture thread reports back (up to 10s), and the
+    // microphone prompt can block for a minute. Neither belongs on a tokio worker: the runtime
+    // is small and the STT socket - the thing that must stay responsive - shares it.
+    tauri::async_runtime::spawn_blocking(move || begin_session(&app, device))
+        .await
+        .map_err(|e| format!("session start task failed: {e}"))?
 }
 
 /// Ends a session. Shared by the command and the headless autostop hook so the loop
@@ -638,12 +721,15 @@ fn end_session(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
     // Take this session's flag and raise it. Because the flag belongs to the session, a
     // following session cannot clear it before this producer has seen it.
-    if let Some(stop) = state.stop.lock().unwrap().take() {
+    if let Some(stop) = lock(&state.stop).take() {
         stop.store(true, Ordering::Relaxed);
     }
     // Dropping the last remaining sender closes the audio channel, which makes the STT
     // task send CloseStream and return.
-    state.audio_tx.lock().unwrap().take();
+    lock(&state.audio_tx).take();
+    // Never leave a level behind: NaN is the replay sentinel and would make the next session's
+    // watchdog believe its source had already closed.
+    state.level.store(0.0f32.to_bits(), Ordering::Relaxed);
     emit_status(app, false, "stopped");
 }
 
@@ -658,6 +744,19 @@ fn list_devices() -> Result<Vec<String>, String> {
     audio::list_input_devices()
 }
 
+/// The name the dialer injected, so a reloaded webview does not lose it.
+#[tauri::command]
+fn call_context(state: tauri::State<'_, AppState>) -> Option<String> {
+    lock(&state.context).clone()
+}
+
+/// Forgets the name at the end of a call.
+#[tauri::command]
+fn clear_call_context(app: tauri::AppHandle, state: tauri::State<'_, AppState>) {
+    *lock(&state.context) = None;
+    emit_context(&app, None);
+}
+
 #[tauri::command]
 fn key_status() -> Vec<keys::KeyStatus> {
     vec![
@@ -668,24 +767,31 @@ fn key_status() -> Vec<keys::KeyStatus> {
 
 #[tauri::command]
 fn tracker_snapshot(state: tauri::State<'_, AppState>) -> tracker::TrackerSnapshot {
-    state.tracker.lock().unwrap().snapshot()
+    lock(&state.tracker).snapshot()
 }
 
 #[tauri::command]
 fn nudge(app: tauri::AppHandle, state: tauri::State<'_, AppState>, delta: i32) -> i32 {
-    let id = state.tracker.lock().unwrap().manual(delta);
+    let id = lock(&state.tracker).manual(delta);
     emit_active(&app, &state.tracker, id, "manual");
     id
 }
 
 #[tauri::command]
 fn audio_level(state: tauri::State<'_, AppState>) -> f32 {
-    f32::from_bits(state.level.load(Ordering::Relaxed))
+    // NaN is the end-of-source sentinel, and serde_json cannot represent it: it serialises as
+    // `null`, which reaches the meter as a non-number. Report the meter's own scale instead.
+    let level = f32::from_bits(state.level.load(Ordering::Relaxed));
+    if level.is_finite() {
+        level.clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
 }
 
 #[tauri::command]
 fn script_lines(state: tauri::State<'_, AppState>) -> Vec<tracker::ScriptLine> {
-    state.tracker.lock().unwrap().lines().to_vec()
+    lock(&state.tracker).lines().to_vec()
 }
 
 fn toggle_visibility(app: &tauri::AppHandle) {
@@ -726,7 +832,7 @@ fn toggle_edit_mode(app: &tauri::AppHandle) {
 
 fn nudge_from_hotkey(app: &tauri::AppHandle, delta: i32) {
     let state = app.state::<AppState>();
-    let id = state.tracker.lock().unwrap().manual(delta);
+    let id = lock(&state.tracker).manual(delta);
     println!("HOTKEY nudge delta={delta} active={id}");
     emit_active(app, &state.tracker, id, "manual-hotkey");
 }
@@ -906,6 +1012,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             hud_report,
             set_click_through,
+            call_context,
+            clear_call_context,
             start_session,
             stop_session,
             list_devices,
@@ -953,11 +1061,38 @@ pub fn run() {
                 level: Arc::new(AtomicU32::new(0)),
                 stop: Mutex::new(None),
                 audio_tx: Mutex::new(None),
+                context: Mutex::new(None),
                 http: reqwest::Client::builder()
                     .timeout(Duration::from_secs(5))
                     .build()
                     .expect("http client"),
             });
+
+            // Dialer intake. Pulse POSTs the owner's name to 127.0.0.1 when it connects a call,
+            // so the script's placeholders are filled before the line is answered. A failure
+            // here is logged, never fatal: the HUD is still fully usable without a dialer.
+            {
+                let sink = app.handle().clone();
+                let port = std::env::var("STEALTH_LEAD_PORT")
+                    .ok()
+                    .and_then(|v| v.parse::<u16>().ok())
+                    .unwrap_or(lead::DEFAULT_PORT);
+                let token = std::env::var("STEALTH_LEAD_TOKEN")
+                    .ok()
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty());
+                match lead::spawn(port, token, move |incoming| {
+                    let name = incoming.name.filter(|n| !n.is_empty());
+                    {
+                        let state = sink.state::<AppState>();
+                        *lock(&state.context) = name.clone();
+                    }
+                    emit_context(&sink, name);
+                }) {
+                    Ok(bound) => println!("LEAD_READY http://127.0.0.1:{bound}/lead"),
+                    Err(err) => eprintln!("LEAD_LISTENER_ERROR {err} (dialer intake disabled)"),
+                }
+            }
 
             // Restore the last placement. `center: true` used to live in tauri.conf.json and
             // silently overrode this, and macOS also repositions the window when it is first

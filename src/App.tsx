@@ -4,9 +4,14 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { cueChips } from "./lib/cues";
 import { loadScript } from "./lib/script";
+import { ColdCallTracker, FLOW } from "./lib/coldcall";
+import { fillName } from "./lib/placeholders";
+import ColdCallFlowchart from "./ColdCallFlowchart";
 import fixture from "./fixtures/remodeler_script.json";
 
 const script = loadScript(fixture as never);
+/** One HUD, one flowchart state. */
+const flowTracker = new ColdCallTracker(FLOW);
 
 type StatusEvent = { running: boolean; message: string };
 type TranscriptEvent = { text: string; is_final: boolean };
@@ -23,6 +28,19 @@ export default function App() {
   const [editMode, setEditMode] = useState(false);
   const [devices, setDevices] = useState<string[]>([]);
   const [device, setDevice] = useState<string | null>(() => localStorage.getItem("tp.device"));
+  // Two surfaces: the cold-call flowchart (default) and the original linear list, which is still
+  // what the Call 1 / Call 2 sales scripts use.
+  const [view, setView] = useState<"flow" | "list">("flow");
+  const [flowActive, setFlowActive] = useState(FLOW.center[0]?.id ?? 1);
+  const [flowTier, setFlowTier] = useState<number | null>(null);
+  // The business owner's name for this call, injected by the dialer over loopback.
+  const [leadName, setLeadName] = useState<string | null>(null);
+  // Module-level instance (below) rather than per-render: this app re-renders several times a
+  // second for the level meter, and rebuilding the matcher each time would churn needlessly.
+  const viewRef = useRef(view);
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
 
   // Edit mode = click-through is off: the window is unlocked, draggable and clickable.
   useEffect(() => {
@@ -54,10 +72,37 @@ export default function App() {
         setReason(e.payload.reason);
       }),
       listen<StatusEvent>("status", (e) => setStatus(e.payload)),
-      listen<TranscriptEvent>("transcript", (e) => setSpoken(e.payload.text)),
+      listen<TranscriptEvent>("transcript", (e) => {
+        setSpoken(e.payload.text);
+        // The flowchart matcher is rep-first and tiered; it runs on the same transcripts the
+        // Rust tracker already produces, so no native change is needed to drive this view.
+        if (viewRef.current !== "flow") return;
+        const tracker = flowTracker;
+        // `is_final` matters: an interim is rewritten by Deepgram, so it must replace the
+        // in-progress tail rather than be appended to the settled speech.
+        const decision = tracker.decide(e.payload.text, e.payload.is_final);
+        if (!decision) return;
+        setFlowTier(decision.tier);
+        if (decision.id !== tracker.activeId) setFlowActive(tracker.jump(decision.id));
+      }),
     ];
     return () => {
       unlisteners.forEach((p) => p.then((off) => off()));
+    };
+  }, []);
+
+  // The dialer's name for the call in progress. The dialer dials the owner, so one name fills
+  // both [Prospect Name] and [Owner's First Name].
+  useEffect(() => {
+    invoke<string | null>("call_context")
+      .then(setLeadName)
+      .catch(() => undefined);
+    const off = listen<{ name: string | null }>("call_context", (e) =>
+      setLeadName(e.payload.name)
+    );
+    return () => {
+      // Rejects when the page is served outside the Tauri shell (the browser preview).
+      off.then((f) => f()).catch(() => undefined);
     };
   }, []);
 
@@ -114,11 +159,28 @@ export default function App() {
   // Manual override. Global shortcuts land in T7.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // In the flowchart, arrows walk the centre path. Before this, they still called the Rust
+      // `nudge`, which moved the *linear* tracker behind the flowchart's back.
+      if (viewRef.current === "flow") {
+        if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+          e.preventDefault();
+          setFlowActive(flowTracker.advance());
+        }
+        if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+          e.preventDefault();
+          setFlowActive(flowTracker.retreat());
+        }
+        return;
+      }
       if (e.key === "ArrowDown") invoke("nudge", { delta: 1 }).then((id) => setActiveId(id as number)).catch(() => undefined);
       if (e.key === "ArrowUp") invoke("nudge", { delta: -1 }).then((id) => setActiveId(id as number)).catch(() => undefined);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const jumpTo = useCallback((id: number) => {
+    setFlowActive(flowTracker.jump(id));
   }, []);
 
   const activeIndex = script.lines.findIndex((line) => line.id === activeId);
@@ -131,11 +193,16 @@ export default function App() {
     activeRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [activeId]);
 
-  const stageLabel = reason.startsWith("stage2")
-    ? "STAGE 2 (DEEPSEEK)"
-    : reason.startsWith("stage1")
-      ? "STAGE 1 (LOCAL)"
-      : "MANUAL";
+  const stageLabel =
+    view === "flow"
+      ? flowTier === null
+        ? "FLOW"
+        : `TIER ${flowTier}`
+      : reason.startsWith("stage2")
+        ? "STAGE 2 (DEEPSEEK)"
+        : reason.startsWith("stage1")
+          ? "STAGE 1 (LOCAL)"
+          : "MANUAL";
 
   // Dragging is implemented here rather than with `data-tauri-drag-region`, because that
   // attribute is handled by an injected script that calls `plugin:window|start_dragging`
@@ -221,6 +288,12 @@ export default function App() {
       <div className="bar">
         <span className={status.running ? "dot live" : "dot"} />
         <span className="status">{status.message}</span>
+        {/* Proof the dialer's name landed, without needing to scroll to Turn 1. */}
+        {leadName && (
+          <span className="lead-name" title="Injected by the dialer for this call">
+            {leadName}
+          </span>
+        )}
         <span className="stage" data-stage={stageLabel.includes("2") ? "2" : "1"}>
           {stageLabel}
         </span>
@@ -234,6 +307,13 @@ export default function App() {
             🔒 LOCKED
           </span>
         )}
+        <button
+          className="btn"
+          onClick={() => setView(view === "flow" ? "list" : "flow")}
+          title="Switch between the 3-column flowchart and the linear list"
+        >
+          {view === "flow" ? "Flow" : "List"}
+        </button>
         <button className="btn" onClick={status.running ? stop : start} disabled={busy}>
           {status.running ? "Stop" : "Start"}
         </button>
@@ -260,6 +340,14 @@ export default function App() {
         </select>
       )}
 
+      {view === "flow" ? (
+        <ColdCallFlowchart
+          flow={FLOW}
+          activeId={flowActive}
+          onJump={jumpTo}
+          name={leadName}
+        />
+      ) : (
       <div className="blocks">
         {script.lines.map((line, i) => {
           const state = line.id === activeId ? "active" : i < activeIndex ? "past" : "future";
@@ -273,7 +361,7 @@ export default function App() {
                 ref={line.id === activeId ? activeRef : undefined}
               >
                 <span className="label">{line.label}</span>
-                {line.body}
+                {fillName(line.body, leadName)}
                 {state === "active" && (
                   <div className="cues">
                     {cueChips(line.cue).map((chip) => (
@@ -289,11 +377,14 @@ export default function App() {
           );
         })}
       </div>
+      )}
 
       <div className="footer">
         <span className="spoken">{spoken || "waiting for speech"}</span>
         <span>
-          {active.id}/{script.lines.length}
+          {view === "flow"
+            ? `${flowActive} · ${flowTracker.card(flowActive)?.label ?? ""}`
+            : `${active.id}/${script.lines.length}`}
         </span>
       </div>
       {error && (

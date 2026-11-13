@@ -18,6 +18,13 @@ use tokio_tungstenite::tungstenite::Message;
 /// Must stay well under Deepgram's 10s idle timeout.
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(4);
 const MAX_BACKOFF_SECS: u64 = 10;
+/// A connect that has not completed in this long is not going to: DNS is wedged or the network
+/// is gone. Without a deadline the socket sits in the OS retry for over a minute, with the HUD
+/// showing "listening" and nothing arriving.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// A session that lived this long was healthy, so a later drop should reconnect in 1s rather
+/// than inheriting the backoff that a failed connect earned.
+const HEALTHY_SESSION: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Transcript {
@@ -119,8 +126,9 @@ async fn run_session(
         HeaderValue::from_str(&format!("Token {api_key}")).map_err(|e| format!("bad key: {e}"))?,
     );
 
-    let (mut socket, _) = connect_async(request)
+    let (mut socket, _) = tokio::time::timeout(CONNECT_TIMEOUT, connect_async(request))
         .await
+        .map_err(|_| format!("connect timed out after {}s", CONNECT_TIMEOUT.as_secs()))?
         .map_err(|e| format!("connect failed: {e}"))?;
     println!("STT_CONNECTED model=nova-3 rate=16000");
     let _ = events.send(SttEvent::Connected);
@@ -180,6 +188,34 @@ async fn run_session(
     }
 }
 
+/// Waits out the reconnect delay while discarding audio.
+///
+/// The audio channel is unbounded, so sleeping straight through it queues every second of a dead
+/// socket and then dumps that whole backlog into Deepgram the moment it reconnects: the tracker
+/// would receive a burst of stale, duplicated speech and the highlight would jump around. Those
+/// words are lost either way, so dropping them is the honest choice.
+///
+/// Returns `false` when the capture side has closed, which means the session is over and
+/// reconnecting would leave a socket nobody is feeding.
+async fn wait_out_backoff(
+    backoff: Duration,
+    audio_rx: &mut UnboundedReceiver<Vec<i16>>,
+) -> bool {
+    let deadline = tokio::time::Instant::now() + backoff;
+    loop {
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            return true;
+        }
+        let slice = (deadline - now).min(Duration::from_millis(250));
+        match tokio::time::timeout(slice, audio_rx.recv()).await {
+            Ok(Some(_)) => continue,
+            Ok(None) => return false,
+            Err(_) => {}
+        }
+    }
+}
+
 /// Runs until the audio stream ends, reconnecting with exponential backoff.
 pub async fn run(
     api_key: String,
@@ -188,15 +224,25 @@ pub async fn run(
 ) {
     let mut backoff = 1u64;
     loop {
+        let started = tokio::time::Instant::now();
         match run_session(&api_key, &mut audio_rx, &events).await {
             Ok(()) => {
                 println!("STT_STOPPED clean");
                 return;
             }
             Err(err) => {
+                // Reset the ladder after a healthy session: a drop ten minutes into a live call
+                // is not the same failure as being unable to connect, and waiting out the 8-10s
+                // a burst of failures earned would put a hole in the transcript mid-sentence.
+                if started.elapsed() >= HEALTHY_SESSION {
+                    backoff = 1;
+                }
                 eprintln!("STT_ERROR {err} (reconnecting in {backoff}s)");
                 let _ = events.send(SttEvent::Error(err));
-                tokio::time::sleep(Duration::from_secs(backoff)).await;
+                if !wait_out_backoff(Duration::from_secs(backoff), &mut audio_rx).await {
+                    println!("STT_STOPPED capture closed during backoff");
+                    return;
+                }
                 backoff = (backoff * 2).min(MAX_BACKOFF_SECS);
             }
         }
@@ -206,6 +252,7 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::parse;
+    use std::time::Duration;
 
     #[test]
     fn extracts_a_final_transcript() {
@@ -226,6 +273,38 @@ mod tests {
         let raw =
             r#"{"type":"Results","is_final":false,"channel":{"alternatives":[{"transcript":""}]}}"#;
         assert!(parse(raw).is_none());
+    }
+
+    /// Regression: the backlog of a dead socket used to be replayed on reconnect, so the
+    /// tracker saw minutes of stale speech arrive at once.
+    #[tokio::test]
+    async fn backoff_discards_queued_audio() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        for _ in 0..50 {
+            tx.send(vec![7i16; 160]).expect("send");
+        }
+        let started = std::time::Instant::now();
+        assert!(
+            super::wait_out_backoff(Duration::from_millis(300), &mut rx).await,
+            "capture is still alive, so the loop must continue"
+        );
+        assert!(
+            started.elapsed() >= Duration::from_millis(250),
+            "the delay must actually be waited out"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "the backlog must be drained, not replayed into the next socket"
+        );
+    }
+
+    /// A stopped session must not reconnect. The old code slept through the closed channel and
+    /// then tried for a socket with no producer behind it.
+    #[tokio::test]
+    async fn backoff_ends_when_capture_stops() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+        drop(tx);
+        assert!(!super::wait_out_backoff(Duration::from_secs(5), &mut rx).await);
     }
 
     #[test]

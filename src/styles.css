@@ -150,6 +150,20 @@ body {
   white-space: nowrap;
 }
 
+/* The name the dialer injected: visible proof it landed, without reading Turn 1. */
+.lead-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(212, 175, 55, 0.45);
+  color: #e8cf7a;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
 .btn {
   font: inherit;
   font-size: 9px;
@@ -315,4 +329,156 @@ body {
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid rgba(255, 255, 255, 0.15);
   border-radius: 4px;
+}
+
+/* ---------------------------------------------------------------------------
+   Cold-call flowchart. Three columns: 1fr 380px 1fr. The centre column is the
+   gold line and is the only place the highlight lives; the side columns hold
+   the objection cards. Every column scrolls independently and smoothly.
+   --------------------------------------------------------------------------- */
+.flow {
+  display: grid;
+  grid-template-columns: 1fr 380px 1fr;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.flow-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  /* The active card is centred by scrolling, so both scrollbars are noise. */
+  scrollbar-width: none;
+  padding: 42vh 2px;
+  scroll-behavior: smooth;
+}
+
+.flow-col::-webkit-scrollbar {
+  display: none;
+}
+
+.flow-col--center {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.flow-card {
+  position: relative;
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  transition: background 180ms ease, border-color 180ms ease, color 180ms ease,
+    transform 180ms ease, box-shadow 180ms ease;
+  cursor: pointer;
+}
+
+.flow-card:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.flow-card:focus-visible {
+  outline: 2px solid rgba(212, 175, 55, 0.8);
+  outline-offset: 2px;
+}
+
+.flow-card--branch {
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.flow-card--center .flow-copy {
+  font-size: 13px;
+  line-height: 1.38;
+}
+
+/* The gold line. One visual destination for the eye, whatever the call does. */
+.flow-card[data-active="true"] {
+  background: rgba(212, 175, 55, 0.16);
+  border-color: #d4af37;
+  color: #fff8e1;
+  box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.55), 0 8px 26px rgba(0, 0, 0, 0.45);
+  transform: translateY(-1px);
+}
+
+.flow-card[data-active="true"] .flow-label,
+.flow-card[data-active="true"] .flow-turn {
+  color: #ffd76a;
+}
+
+.flow-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.flow-turn {
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: rgba(212, 175, 55, 0.85);
+  white-space: nowrap;
+}
+
+.flow-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.flow-trigger {
+  font-size: 10.5px;
+  font-style: italic;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 5px;
+}
+
+.flow-copy {
+  margin: 0;
+}
+
+.flow-beat {
+  margin: 0 0 4px;
+}
+
+.flow-beat:last-child {
+  margin-bottom: 0;
+}
+
+.flow-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.flow-days span {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(212, 175, 55, 0.16);
+  border: 1px solid rgba(212, 175, 55, 0.35);
+}
+
+.flow-days strong {
+  color: #ffd76a;
+  font-weight: 700;
+}
+
+.flow-next {
+  margin-top: 6px;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.38);
 }

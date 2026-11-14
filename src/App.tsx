@@ -452,14 +452,22 @@ export default function App() {
       }
 
       if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
-      if (e.key === "ArrowDown")
+      if (e.key === " " && (e.target as HTMLElement)?.tagName !== "INPUT") {
+        e.preventDefault();
+        return;
+      }
+      if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+        e.preventDefault();
         invoke("nudge", { delta: 1 })
           .then((id) => setActiveId(id as number))
           .catch(() => undefined);
-      if (e.key === "ArrowUp")
+      }
+      if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+        e.preventDefault();
         invoke("nudge", { delta: -1 })
           .then((id) => setActiveId(id as number))
           .catch(() => undefined);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

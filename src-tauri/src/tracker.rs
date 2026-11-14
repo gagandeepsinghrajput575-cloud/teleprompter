@@ -48,6 +48,20 @@ const COMPLETE_NEXT_START_COVERAGE: f64 = 0.3;
 /// to fire within an interim of hearing the line's final word (so the highlight leads, not lags).
 const LIVE_COMPLETE_COVERAGE: f64 = 0.70;
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ScriptBranch {
+    pub condition: String,
+    pub response: String,
+    #[serde(default)]
+    pub side: Option<String>,
+    #[serde(default)]
+    pub head: Option<String>,
+    #[serde(default)]
+    pub prospect: Option<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct ScriptLine {
     pub id: i32,
@@ -57,12 +71,26 @@ pub struct ScriptLine {
     pub raw: String,
     /// Spoken text, markers stripped. Derived so the fixture cannot drift.
     pub body: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub branches: Vec<ScriptBranch>,
 }
 
 #[derive(serde::Deserialize)]
 struct RawLine {
     id: i32,
     phase: String,
+    label: String,
+    raw: String,
+    #[serde(default)]
+    branches: Vec<ScriptBranch>,
+}
+
+#[derive(serde::Deserialize)]
+struct RawFlowCard {
+    id: i32,
+    #[serde(default)]
+    turn: Option<String>,
+    #[serde(default)]
     label: String,
     raw: String,
 }
@@ -72,7 +100,12 @@ struct RawScript {
     id: String,
     title: String,
     version: u32,
+    #[serde(default)]
     lines: Vec<RawLine>,
+    #[serde(default)]
+    center: Vec<RawFlowCard>,
+    #[serde(default)]
+    branches: Vec<RawFlowCard>,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -160,12 +193,8 @@ pub fn load_script_by_type(call_type: &str) -> Result<ScriptFile, String> {
     };
     let raw: RawScript =
         serde_json::from_str(json).map_err(|e| format!("script fixture is malformed: {e}"))?;
-    Ok(ScriptFile {
-        id: raw.id,
-        title: raw.title,
-        version: raw.version,
-        lines: raw
-            .lines
+    let lines = if !raw.lines.is_empty() {
+        raw.lines
             .into_iter()
             .map(|line| ScriptLine {
                 body: strip_annotations(&line.raw),
@@ -173,8 +202,28 @@ pub fn load_script_by_type(call_type: &str) -> Result<ScriptFile, String> {
                 phase: line.phase,
                 label: line.label,
                 raw: line.raw,
+                branches: line.branches,
             })
-            .collect(),
+            .collect()
+    } else {
+        raw.center
+            .into_iter()
+            .chain(raw.branches.into_iter())
+            .map(|card| ScriptLine {
+                body: strip_annotations(&card.raw),
+                id: card.id,
+                phase: card.turn.unwrap_or_else(|| card.label.clone()),
+                label: card.label,
+                raw: card.raw,
+                branches: Vec::new(),
+            })
+            .collect()
+    };
+    Ok(ScriptFile {
+        id: raw.id,
+        title: raw.title,
+        version: raw.version,
+        lines,
     })
 }
 
@@ -191,13 +240,157 @@ const STOPWORDS: &[&str] = &[
     "really", "actually", "think", "know",
 ];
 
+/// Simple English stemmer for common suffixes so plurals ("calls" vs "call") and verb forms
+/// ("booking" vs "booked") match seamlessly.
+pub fn stem(word: &str) -> String {
+    let mut w = word.to_lowercase();
+    if w.len() > 5 && w.ends_with("ing") {
+        w.truncate(w.len() - 3);
+        return w;
+    }
+    if w.len() > 4 && w.ends_with("ed") {
+        w.truncate(w.len() - 2);
+        return w;
+    }
+    if w.len() > 4 && w.ends_with("es") {
+        w.truncate(w.len() - 2);
+        return w;
+    }
+    if w.len() > 3 && w.ends_with('s') && !w.ends_with("ss") {
+        w.truncate(w.len() - 1);
+        return w;
+    }
+    w
+}
+
+/// Levenshtein edit distance between two strings.
+pub fn edit_distance(s1: &str, s2: &str) -> usize {
+    let v1: Vec<char> = s1.chars().collect();
+    let v2: Vec<char> = s2.chars().collect();
+    let len1 = v1.len();
+    let len2 = v2.len();
+    if len1 == 0 {
+        return len2;
+    }
+    if len2 == 0 {
+        return len1;
+    }
+    if len1.abs_diff(len2) > 2 {
+        return 999;
+    }
+    let mut prev: Vec<usize> = (0..=len2).collect();
+    let mut curr = vec![0; len2 + 1];
+    for i in 1..=len1 {
+        curr[0] = i;
+        for j in 1..=len2 {
+            let cost = if v1[i - 1] == v2[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        prev.copy_from_slice(&curr);
+    }
+    prev[len2]
+}
+
+/// Matches words with stem invariance and fuzzy tolerance for phonetic/ASR near-misses.
+pub fn words_match(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    let sa = stem(a);
+    let sb = stem(b);
+    if sa == sb || sa == b || a == sb {
+        return true;
+    }
+    let la = a.chars().count();
+    let lb = b.chars().count();
+    if la.abs_diff(lb) <= 2 {
+        let max_edits = if la >= 8 && lb >= 8 {
+            2
+        } else if la >= 5 && lb >= 5 {
+            1
+        } else {
+            0
+        };
+        if max_edits > 0 && edit_distance(a, b) <= max_edits {
+            return true;
+        }
+    }
+    false
+}
+
+/// Counts how many target words in `line_body` are satisfied by `heard` tokens, using exact,
+/// stem, and fuzzy matching.
+pub fn count_hits(heard: &HashSet<String>, line_body: &HashSet<String>) -> usize {
+    line_body
+        .iter()
+        .filter(|&bw| {
+            heard.contains(bw)
+                || heard.contains(&stem(bw))
+                || heard.iter().any(|h| words_match(h, bw))
+        })
+        .count()
+}
+
+/// Normalizes numeric tokens and times into spoken words so "10" matches "ten", "4" matches "four", etc.
+fn expand_numbers_and_contractions(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 32);
+    for raw_word in text.split_whitespace() {
+        let lower = raw_word.to_lowercase();
+        let cleaned =
+            lower.trim_matches(|c: char| !c.is_alphanumeric() && c != ':' && c != '$' && c != ',');
+        match cleaned {
+            "1" => out.push_str("one "),
+            "2" => out.push_str("two "),
+            "3" => out.push_str("three "),
+            "4" => out.push_str("four "),
+            "5" => out.push_str("five "),
+            "6" => out.push_str("six "),
+            "7" => out.push_str("seven "),
+            "8" => out.push_str("eight "),
+            "9" => out.push_str("nine "),
+            "10" => out.push_str("ten "),
+            "11" => out.push_str("eleven "),
+            "12" => out.push_str("twelve "),
+            "13" => out.push_str("thirteen "),
+            "14" => out.push_str("fourteen "),
+            "15" => out.push_str("fifteen "),
+            "16" => out.push_str("sixteen "),
+            "17" => out.push_str("seventeen "),
+            "18" => out.push_str("eighteen "),
+            "19" => out.push_str("nineteen "),
+            "20" => out.push_str("twenty "),
+            "24" => out.push_str("twenty four "),
+            "30" => out.push_str("thirty "),
+            "40" => out.push_str("forty "),
+            "50" => out.push_str("fifty "),
+            "60" => out.push_str("sixty "),
+            "80" => out.push_str("eighty "),
+            "12:30" => out.push_str("twelve thirty "),
+            "15:30" => out.push_str("fifteen thirty "),
+            "14:30" => out.push_str("fourteen thirty "),
+            "15:00" => out.push_str("fifteen "),
+            "8:00" => out.push_str("eight "),
+            "$15k" | "15k" => out.push_str("fifteen thousand "),
+            "40,000" | "40000" => out.push_str("forty thousand "),
+            "80,000" | "80000" => out.push_str("eighty thousand "),
+            _ => {
+                out.push_str(raw_word);
+                out.push(' ');
+            }
+        }
+    }
+    out
+}
+
 /// Content words in spoken order (stopwords and very short words removed), deduplicated only by
 /// the caller. Order matters for detecting a line's *closing* words at a pause.
 fn ordered_tokens(text: &str) -> Vec<String> {
-    text.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric() && c != '\'' && c != '-')
-        .map(|w| w.trim_matches('\'').to_string())
-        .filter(|w| w.len() >= 3 && !STOPWORDS.contains(&w.as_str()))
+    let expanded = expand_numbers_and_contractions(text);
+    expanded
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .map(|w| w.replace('\'', "").trim().to_string())
+        .filter(|w| (w.len() >= 3 || w == "hi") && !STOPWORDS.contains(&w.as_str()))
         .collect()
 }
 
@@ -208,8 +401,35 @@ fn tokens(text: &str) -> HashSet<String> {
 /// The matching vocabulary for a line is the spoken **body only**. `label` and `phase` are
 /// navigation chrome the rep never says; folding them in let a single incidental word jump the
 /// highlight, because a common word could match a label rather than anything spoken.
-fn body_tokens(line: &ScriptLine) -> HashSet<String> {
-    tokens(&line.body)
+#[allow(dead_code)]
+pub fn body_tokens(line: &ScriptLine) -> HashSet<String> {
+    let mut set: HashSet<String> = spoken_content(&line.raw).into_iter().collect();
+    if set.is_empty() {
+        set = tokens(&line.body);
+    }
+    for b in &line.branches {
+        set.extend(spoken_content(&b.response));
+    }
+    set
+}
+
+/// Per-line matching variants: the primary spoken line and each branch response are evaluated
+/// as separate alternative paths, so a speaker delivering a branch or a brief primary line is
+/// evaluated against that variant's token set rather than an artificially inflated union.
+fn line_variants(line: &ScriptLine) -> Vec<HashSet<String>> {
+    let mut variants = Vec::with_capacity(1 + line.branches.len());
+    let mut primary: HashSet<String> = spoken_content(&line.raw).into_iter().collect();
+    if primary.is_empty() {
+        primary = tokens(&line.body);
+    }
+    variants.push(primary);
+    for b in &line.branches {
+        let branch_set: HashSet<String> = spoken_content(&b.response).into_iter().collect();
+        if !branch_set.is_empty() {
+            variants.push(branch_set);
+        }
+    }
+    variants
 }
 
 /// The words the speaker is actually expected to say, in order. Unlike `body`, this also removes
@@ -235,9 +455,9 @@ fn spoken_content(raw: &str) -> Vec<String> {
 
 pub struct Tracker {
     lines: Vec<ScriptLine>,
-    /// Per-line matching vocabulary (spoken body only), precomputed so `local_match` does not
-    /// rebuild every line's token set on every interim word.
-    body_sets: Vec<HashSet<String>>,
+    /// Per-line matching variants: each line has a list of token sets (the primary line, plus any
+    /// branch responses) so branch paths don't inflate the primary line's coverage denominator.
+    line_variants: Vec<Vec<HashSet<String>>>,
     active: i32,
     window: VecDeque<String>,
     words_since_cycle: usize,
@@ -267,10 +487,10 @@ pub struct TrackerSnapshot {
 impl Tracker {
     pub fn new(lines: Vec<ScriptLine>) -> Result<Self, String> {
         let active = lines.first().ok_or("script has no lines")?.id;
-        let body_sets: Vec<HashSet<String>> = lines.iter().map(body_tokens).collect();
+        let line_variants: Vec<Vec<HashSet<String>>> = lines.iter().map(line_variants).collect();
         Ok(Self {
             lines,
-            body_sets,
+            line_variants,
             active,
             window: VecDeque::with_capacity(BUFFER_WORDS),
             words_since_cycle: 0,
@@ -291,7 +511,7 @@ impl Tracker {
     pub fn switch_script(&mut self, lines: Vec<ScriptLine>) -> i32 {
         let first_id = lines.first().map(|l| l.id).unwrap_or(1);
         self.lines = lines;
-        self.body_sets = self.lines.iter().map(body_tokens).collect();
+        self.line_variants = self.lines.iter().map(line_variants).collect();
         self.active = first_id;
         self.pending_id = None;
         self.pending_count = 0;
@@ -317,38 +537,8 @@ impl Tracker {
         parts.join(" ")
     }
 
-    pub fn is_completed_echo(&self, text: &str) -> bool {
-        if let Some((completed_id, completed_at)) = self.last_completed {
-            if completed_at.elapsed() < std::time::Duration::from_secs(4) {
-                if let Some(comp_line) = self.lines.iter().find(|l| l.id == completed_id) {
-                    let comp_toks = tokens(&comp_line.body);
-                    let input_toks = tokens(text);
-                    let hits = input_toks.iter().filter(|t| comp_toks.contains(*t)).count();
-                    if hits >= 1 {
-                        let curr_toks = self
-                            .lines
-                            .iter()
-                            .find(|l| l.id == self.active)
-                            .map(|l| tokens(&l.body))
-                            .unwrap_or_default();
-                        let curr_hits =
-                            input_toks.iter().filter(|t| curr_toks.contains(*t)).count();
-                        if hits > curr_hits {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        false
-    }
-
     /// Adds spoken words to the rolling window; returns how many were new.
     pub fn push_text(&mut self, text: &str) -> usize {
-        if self.is_completed_echo(text) {
-            // Drop finalized echo of the line that was already completed to keep the active line fresh
-            return 0;
-        }
         let mut added = 0;
         for word in text.split_whitespace() {
             if self.window.len() == BUFFER_WORDS {
@@ -405,20 +595,29 @@ impl Tracker {
 
         let complete = {
             let curr_line = self.lines.iter().find(|l| l.id == self.active)?;
-            let ordered = spoken_content(&curr_line.raw);
-            if ordered.is_empty() {
-                // A pause-only line has no words to say; it completes on the first pause.
-                true
-            } else {
+            let mut ordered_variants = vec![spoken_content(&curr_line.raw)];
+            for b in &curr_line.branches {
+                ordered_variants.push(spoken_content(&b.response));
+            }
+
+            let mut heard = tokens(&self.spoken_buffer());
+            heard.extend(final_tokens.iter().cloned());
+
+            let mut any_variant_complete = false;
+            for ordered in ordered_variants {
+                if ordered.is_empty() {
+                    any_variant_complete = true;
+                    break;
+                }
                 let body: HashSet<String> = ordered.iter().cloned().collect();
-                // Coverage is measured over everything heard for this line so far (recent window
-                // plus this final), so a line split by a mid-sentence pause still accumulates.
-                let mut heard = tokens(&self.spoken_buffer());
-                heard.extend(final_tokens.iter().cloned());
-                let hits = heard.iter().filter(|t| body.contains(*t)).count();
+                let hits = count_hits(&heard, &body);
                 let coverage = hits as f64 / body.len() as f64;
-                // Closing words: a breath pause rarely utters the end of the sentence.
-                let tail_present = ordered.iter().rev().take(2).any(|t| heard.contains(t));
+                // Closing words: check the last 3 words using stem and fuzzy matching
+                let tail_present = ordered.iter().rev().take(3).any(|t| {
+                    heard.contains(t)
+                        || heard.contains(&stem(t))
+                        || heard.iter().any(|h| words_match(h, t))
+                });
                 // Did the speaker already begin the next line? Then this one is over.
                 let next_started = self
                     .lines
@@ -428,16 +627,25 @@ impl Tracker {
                         let open = spoken_content(&next.raw);
                         open.iter()
                             .take(2)
-                            .filter(|t| final_tokens.contains(*t))
+                            .filter(|t| {
+                                final_tokens.contains(*t)
+                                    || final_tokens.contains(&stem(t))
+                                    || final_tokens.iter().any(|f| words_match(f, t))
+                            })
                             .count()
                             >= 2
                     })
                     .unwrap_or(false);
 
-                coverage >= COMPLETE_MIN_COVERAGE
+                if coverage >= COMPLETE_MIN_COVERAGE
                     || (tail_present && coverage >= COMPLETE_TAIL_COVERAGE)
                     || (next_started && coverage >= COMPLETE_NEXT_START_COVERAGE)
+                {
+                    any_variant_complete = true;
+                    break;
+                }
             }
+            any_variant_complete
         };
 
         if complete {
@@ -462,32 +670,56 @@ impl Tracker {
         let Some(line) = self.lines.iter().find(|l| l.id == self.active) else {
             return false;
         };
-        let ordered = spoken_content(&line.raw);
-        if ordered.is_empty() {
-            // Pause-only lines have no words to detect; the final path completes them.
-            return false;
-        }
         let spoken = tokens(&self.spoken_buffer());
-        let body: HashSet<String> = ordered.iter().cloned().collect();
-        let hits = spoken.iter().filter(|t| body.contains(*t)).count();
-        let coverage = hits as f64 / body.len() as f64;
-        let tail_present = ordered.last().map(|t| spoken.contains(t)).unwrap_or(false);
-        coverage >= LIVE_COMPLETE_COVERAGE && tail_present
+        let mut ordered_variants = vec![spoken_content(&line.raw)];
+        for b in &line.branches {
+            ordered_variants.push(spoken_content(&b.response));
+        }
+
+        for ordered in ordered_variants {
+            if ordered.is_empty() {
+                continue;
+            }
+            let body: HashSet<String> = ordered.iter().cloned().collect();
+            let hits = count_hits(&spoken, &body);
+            let coverage = hits as f64 / body.len() as f64;
+            let tail_present = ordered.iter().rev().take(2).any(|t| {
+                spoken.contains(t)
+                    || spoken.contains(&stem(t))
+                    || spoken.iter().any(|s| words_match(s, t))
+            });
+            if (coverage >= LIVE_COMPLETE_COVERAGE && tail_present) || coverage >= 0.85 {
+                return true;
+            }
+        }
+        false
     }
 
     /// Fraction of the active line's content words present in recent speech (rolling window +
     /// interim). Used to keep the highlight on the current line until it is largely delivered.
     fn active_progress(&self) -> f64 {
-        let Some(line) = self.lines.iter().find(|l| l.id == self.active) else {
+        let Some((idx, _)) = self
+            .lines
+            .iter()
+            .enumerate()
+            .find(|(_, l)| l.id == self.active)
+        else {
             return 0.0;
         };
-        let body = body_tokens(line);
-        if body.is_empty() {
-            return 1.0;
-        }
+        let variants = &self.line_variants[idx];
         let spoken = tokens(&self.spoken_buffer());
-        let hits = body.iter().filter(|t| spoken.contains(*t)).count();
-        hits as f64 / body.len() as f64
+        let mut max_progress = 0.0f64;
+        for var in variants {
+            if var.is_empty() {
+                return 1.0;
+            }
+            let hits = count_hits(&spoken, var);
+            let progress = hits as f64 / var.len() as f64;
+            if progress > max_progress {
+                max_progress = progress;
+            }
+        }
+        max_progress
     }
 
     /// Stage 1: lexical match against block summaries, with rare words weighted higher.
@@ -506,11 +738,12 @@ impl Tracker {
             let next_line_opt = self
                 .lines
                 .iter()
-                .skip_while(|l| l.id <= self.active)
-                .find(|l| !body_tokens(l).is_empty());
+                .enumerate()
+                .skip_while(|(_, l)| l.id <= self.active)
+                .find(|(i, _)| self.line_variants[*i].iter().any(|v| !v.is_empty()));
 
-            if let Some(next_line) = next_line_opt {
-                let next_words = body_tokens(next_line);
+            if let Some((next_idx, next_line)) = next_line_opt {
+                let next_vars = &self.line_variants[next_idx];
                 let recent_text = if !self.partial.trim().is_empty() {
                     self.partial.clone()
                 } else {
@@ -524,50 +757,81 @@ impl Tracker {
                 };
                 let recent_tokens = tokens(&recent_text);
                 if !recent_tokens.is_empty() {
-                    let next_hits = recent_tokens
+                    let next_best_hits = next_vars
                         .iter()
-                        .filter(|t| next_words.contains(*t))
-                        .count();
-                    let curr_words = self
+                        .map(|v| count_hits(&recent_tokens, v))
+                        .max()
+                        .unwrap_or(0);
+                    let curr_idx = self
                         .lines
                         .iter()
-                        .find(|l| l.id == self.active)
-                        .map(body_tokens)
-                        .unwrap_or_default();
-                    let curr_hits = recent_tokens
+                        .position(|l| l.id == self.active)
+                        .unwrap_or(0);
+                    let curr_hits = self.line_variants[curr_idx]
                         .iter()
-                        .filter(|t| curr_words.contains(*t))
-                        .count();
-                    let next_coverage = next_hits as f64 / next_words.len() as f64;
+                        .map(|v| count_hits(&recent_tokens, v))
+                        .max()
+                        .unwrap_or(0);
+                    let next_best_len = next_vars
+                        .iter()
+                        .find(|v| count_hits(&recent_tokens, v) == next_best_hits)
+                        .map(|v| v.len())
+                        .unwrap_or(1)
+                        .max(1);
+                    let next_coverage = next_best_hits as f64 / next_best_len as f64;
 
                     // The speaker must actually be into the next line, and more into it than
                     // into the current one, before the highlight leads them there.
-                    if next_hits >= 2 && next_hits > curr_hits && next_coverage >= 0.2 {
-                        return Some((next_line.id, true, 2.0 + next_hits as f64));
+                    if next_best_hits >= 2 && next_best_hits > curr_hits && next_coverage >= 0.2 {
+                        return Some((next_line.id, true, 2.0 + next_best_hits as f64));
                     }
                 }
             }
         }
 
-        let line_tokens = &self.body_sets;
+        let total_lines = self.lines.len() as f64;
 
         let mut scored: Vec<(i32, f64, usize, usize)> = self
             .lines
             .iter()
-            .zip(line_tokens.iter())
-            .map(|(line, words)| {
-                let mut score = 0.0;
-                let mut hits = 0usize;
-                for token in &buffer {
-                    if !words.contains(token) {
-                        continue;
+            .zip(self.line_variants.iter())
+            .map(|(line, variants)| {
+                let mut best_score = 0.0;
+                let mut best_hits = 0usize;
+                let mut best_len = variants.first().map(|v| v.len()).unwrap_or(0);
+
+                for var in variants {
+                    let mut score = 0.0;
+                    let mut hits = 0usize;
+                    for token in &buffer {
+                        let matched = var.contains(token)
+                            || var.contains(&stem(token))
+                            || var.iter().any(|w| words_match(w, token));
+                        if !matched {
+                            continue;
+                        }
+                        hits += 1;
+                        let df = self
+                            .line_variants
+                            .iter()
+                            .filter(|line_vars| {
+                                line_vars.iter().any(|v| {
+                                    v.contains(token)
+                                        || v.contains(&stem(token))
+                                        || v.iter().any(|w| words_match(w, token))
+                                })
+                            })
+                            .count() as f64;
+                        // Distinctive words count more than words every line shares.
+                        score += (total_lines / df.max(1.0)).ln().max(0.05);
                     }
-                    hits += 1;
-                    let df = line_tokens.iter().filter(|set| set.contains(token)).count() as f64;
-                    // Distinctive words count more than words every line shares.
-                    score += (line_tokens.len() as f64 / df.max(1.0)).ln().max(0.05);
+                    if score > best_score || (score == best_score && hits > best_hits) {
+                        best_score = score;
+                        best_hits = hits;
+                        best_len = var.len();
+                    }
                 }
-                (line.id, score, hits, words.len())
+                (line.id, best_score, best_hits, best_len)
             })
             .collect();
 
@@ -577,9 +841,18 @@ impl Tracker {
             return None;
         }
 
-        // Never propose moving backwards to a line that was completed within the last 4 seconds:
+        let is_next_line = best_id == self.active + 1;
+        let is_backward = best_id < self.active;
+        let coverage = if best_tokens == 0 {
+            0.0
+        } else {
+            best_hits as f64 / best_tokens as f64
+        };
+
+        // Delayed echo guard: never bounce backwards to the immediate line just completed
+        // within the last 2 seconds (stops the final ASR transcript of that line from bouncing back).
         if let Some((completed_id, completed_at)) = self.last_completed {
-            if best_id == completed_id && completed_at.elapsed() < std::time::Duration::from_secs(4)
+            if best_id == completed_id && completed_at.elapsed() < std::time::Duration::from_secs(2)
             {
                 return None;
             }
@@ -587,27 +860,27 @@ impl Tracker {
 
         let second = scored.get(1).map(|(_, score, _, _)| *score).unwrap_or(0.0);
 
-        // The speaker delivers lines in forward sequence: active -> active + 1. The next line is
-        // allowed a slightly easier margin so the highlight can lead into it, but it still needs
-        // real evidence (two distinct content words), never one incidental word.
-        let is_next_line = best_id == self.active + 1;
+        // Forward sequence: active -> active + 1 leads slightly easier.
+        // Backward sequence: jumping to an already passed line requires at least 60% coverage
+        // so deliberate re-reading tracks smoothly without random shuffling mid-call.
         let (min_hits, min_dominant, ratio_margin, min_coverage) = if is_next_line {
             (2usize, 1.0, 1.1, 0.22)
+        } else if is_backward {
+            (2usize.min(best_tokens.max(1)), 1.3, 1.15, 0.60)
         } else {
             (MIN_HITS, MIN_DOMINANT_SCORE, LOCAL_MARGIN, MIN_COVERAGE)
         };
+
+        let effective_min_hits = if best_tokens <= 1 { 1usize } else { min_hits };
 
         let margin_ok = if second <= f64::EPSILON {
             best >= min_dominant
         } else {
             best >= second * ratio_margin
         };
-        let coverage = if best_tokens == 0 {
-            0.0
-        } else {
-            best_hits as f64 / best_tokens as f64
-        };
-        let mut confident = best_hits >= min_hits && margin_ok && coverage >= min_coverage;
+
+        let mut confident =
+            best_hits >= effective_min_hits && margin_ok && coverage >= min_coverage;
 
         // Forward gate: while the active line is still mostly unspoken, a proposal for the next
         // line must be unmistakable (the speaker has clearly moved on) or the highlight holds.
@@ -630,14 +903,17 @@ impl Tracker {
         }
 
         // Forward moves need little proof; the highlight should lead the speaker. Backward moves
-        // are exceptional and require three confirmations, which is what stops the highlight from
-        // oscillating between two adjacent lines as the interim transcript churns at a boundary.
+        // require 60% coverage to be confident; when confident (intentional re-read), they commit
+        // immediately (1 confirmation). Unconfident backward proposals require three confirmations
+        // to prevent jitter and random shuffling mid-call.
         let required: u8 = if proposed > self.active {
             if confident {
                 1
             } else {
                 2
             }
+        } else if confident {
+            1
         } else {
             3
         };
@@ -674,6 +950,15 @@ impl Tracker {
         let index = ids.iter().position(|&id| id == self.active).unwrap_or(0) as i32;
         let next = (index + delta).clamp(0, ids.len() as i32 - 1) as usize;
         self.move_to_index(next)
+    }
+
+    /// Jumps directly to a specific line ID and re-anchors there.
+    pub fn jump_to(&mut self, target_id: i32) -> i32 {
+        if let Some(index) = self.lines.iter().position(|l| l.id == target_id) {
+            self.move_to_index(index)
+        } else {
+            self.active
+        }
     }
 
     /// Snaps to a line by index and starts listening fresh from there (manual re-anchor). The
@@ -755,9 +1040,8 @@ impl Tracker {
         }
     }
 
-    /// Lines within reach of the current position, used to shrink the LLM prompt. With
-    /// line-level tracking this is wider than before, because one sentence is a much smaller
-    /// step than one paragraph.
+    /// Lines within reach of the current position.
+    #[allow(dead_code)]
     pub fn candidate_window(&self) -> Vec<ScriptLine> {
         let ids: Vec<i32> = self.lines.iter().map(|line| line.id).collect();
         let index = ids.iter().position(|&id| id == self.active).unwrap_or(0);
@@ -765,20 +1049,115 @@ impl Tracker {
         let end = (index + 4).min(self.lines.len());
         self.lines[start..end].to_vec()
     }
+
+    /// Complete script flow from start to finish, providing the LLM complete contextual awareness.
+    pub fn all_lines(&self) -> Vec<ScriptLine> {
+        self.lines.clone()
+    }
+
+    /// Prepares domain words and key phrases from the loaded script for Speech Recognizer priming.
+    pub fn vocabulary(&self) -> Vec<String> {
+        let mut set = HashSet::new();
+        for line in &self.lines {
+            for tok in ordered_tokens(&line.raw) {
+                if tok.len() >= 3 {
+                    set.insert(tok);
+                }
+            }
+            for b in &line.branches {
+                for tok in ordered_tokens(&b.response) {
+                    if tok.len() >= 3 {
+                        set.insert(tok);
+                    }
+                }
+            }
+            let stripped = strip_annotations(&line.raw);
+            for chunk in stripped.split(['.', ',', '?', '—']) {
+                let trimmed = chunk.trim();
+                let count = trimmed.split_whitespace().count();
+                if (2..=4).contains(&count) && trimmed.len() <= 32 {
+                    set.insert(trimmed.to_string());
+                }
+            }
+        }
+        let domain_terms = [
+            "Scalix",
+            "Scalix Elite",
+            "Gagan",
+            "Denmark",
+            "Danish",
+            "DKK",
+            "remodeler",
+            "remodeling",
+            "audit",
+            "operations",
+            "shortlist",
+            "voicemail",
+            "gross profit",
+            "profit margin",
+            "high-ticket",
+            "contractor",
+            "job site",
+            "lead generation",
+        ];
+        for term in domain_terms {
+            set.insert(term.to_string());
+        }
+        let mut list: Vec<String> = set.into_iter().collect();
+        list.sort();
+        list
+    }
 }
 
-/// Jev (TypeSafe "System One") decision endpoint, reached through OpenRouter so a single
+#[derive(Clone, Debug)]
+pub enum LlmProvider {
+    Groq(String),
+    Cerebras(String),
+    Jev(String),
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LlmDecision {
+    pub choice: Option<i32>,
+    pub objection: Option<i32>,
+}
+
+/// The 10 canonical objection battlecards and exact authored rebuttals for Scalix Elite.
+pub const OBJECTION_PROMPT_BLOCK: &str = "\
+=== 10 OBJECTION BATTLECARDS & REBUTTALS ===
+[Objection 1] 'Price / Why is it free?'
+  Rebuttal: 'Because we know 80% of established firms will adopt AI automation in the next 8 to 12 months. So we are building relationships and giving upfront value now, so if or when the time comes that you do want to plug those leaks, you\\'ve already got us as a trusted contact. Sounds fair?'
+[Objection 2] 'Not interested / We\\'re good'
+  Rebuttal: 'I\\'m not surprised, [Name]—I haven\\'t got to the good bit yet. Give me 60 seconds to explain why I called, and if you still think it\\'s useless for your business after that, tell me no and I\\'ll hang up myself. Fair enough?'
+[Objection 3] 'Don\\'t take cold calls'
+  Rebuttal: 'Neither do I, [Name], if I can possibly avoid it. But the problem is: your existing software or web guys aren\\'t telling you about this, and you aren\\'t going to go looking for it on your own because you don\\'t know it exists yet. So looking past the phone call for 60 seconds—how about I quickly state the reason I called?'
+[Objection 4] 'Where did you get my number?'
+  Rebuttal: 'Our research team pulls numbers from public Danish registries. But we\\'re very exclusive in the criteria we look for. We only reach out to established firms with roughly 4 to 8 staff and a solid local reputation—which I\\'m assuming applies to you guys?'
+[Objection 5] 'Send me an email'
+  Rebuttal: 'For sure, I can email you. But the reason we do the 10-minute look first is we only implement AI in a business if it can actually generate meaningful results—and the missed-call setup I told you about is only one of the things. So I\\'m not sure what to send you on email without it being irrelevant to you, and that\\'s why we have that 10-minute call first—so we can see all the possible gaps in the business. So what do you say—should we grab 10 minutes tomorrow afternoon, or is Thursday morning better?'
+[Objection 6] 'We already have a web/tech guy'
+  Rebuttal: 'Good to hear. What are they handling right now—just the website, or site call intake too? Got it. We don\\'t replace your web guy. And since the 10-minute look is free, it costs you nothing—after 10 minutes, you\\'ll have a crystal-clear picture of whether there\\'s a leak or if your current setup is airtight. Is tomorrow afternoon or Thursday morning better?'
+[Objection 7] 'We don\\'t use AI / old-school'
+  Rebuttal: 'Well, using AI sounds unnecessary and fancy until you actually see how much evening time it saves you per week, or how it directly stops high-ticket calls from slipping to competitors. See, the thing is, there could be a lot to go over—and that\\'s the exact reason we do the 10-minute review, so we can see all the possible gaps in your business without you committing to anything. Does tomorrow afternoon or Thursday morning work better to at least see what\\'s possible in your case?'
+[Objection 8] 'Booked out / plenty of work'
+  Rebuttal: 'The issue when you\\'re slammed isn\\'t getting more work—it\\'s missing out on cherry-picking the highest-margin 200,000 DKK jobs while wasting your evenings quoting tire-kickers. That\\'s why we should connect for 10 minutes so you can get your evenings back—is tomorrow or Thursday better?'
+[Objection 9] 'Busy / on site / driving'
+  Rebuttal: 'Totally get it, [Name]—I can hear you\\'re busy on site. I won\\'t waste your site time. I can give you a quick ring back at 15:30 when you\\'re off tools, or is tomorrow morning around 08:30 better?'
+[Objection 0] 'Employee on site / not the owner'
+  Rebuttal: 'Alright, I\\'m trying to reach [Name]\\'s direct mobile regarding an operations review, and I think I dialed the site line by mistake. What\\'s the best phone number to catch him on directly?'";
+
+/// Jev (TypeSafe \"System One\") decision endpoint, reached through OpenRouter so a single
 /// OpenRouter key authenticates it. Jev is **not** a chat model: it takes a state plus typed
-/// questions and returns a typed answer with probabilities, which is exactly the "which line am
-/// I on?" decision and removes the JSON-in-a-string fragility of the old chat completion.
+/// questions and returns a typed answer with probabilities, which is exactly the \"which line am
+/// I on?\" decision and removes the JSON-in-a-string fragility of the old chat completion.
 const JEV_URL: &str = "https://openrouter.ai/api/v1/systemone";
 /// Pinned so a threshold tuned here keeps meaning the same thing. `~typesafe/jev-latest` tracks
 /// the newest release; pin when a confidence floor must stay stable across upgrades.
 const JEV_MODEL: &str = "typesafe/jev-1.14";
 /// Kept tight so a slow model cannot stall the HUD behind a stale highlight.
-const LLM_TIMEOUT_MS: u64 = 900;
+const LLM_TIMEOUT_MS: u64 = 1200;
 /// Minimum confidence for a Jev choice to move the highlight. Below this the answer is treated
-/// as "no decision" and the position holds, matching the old model's ambiguity handling.
+/// as \"no decision\" and the position holds, matching the old model's ambiguity handling.
 const JEV_MIN_CONFIDENCE: f64 = 0.55;
 
 /// Instructions for the single `choice` question. Each option's description carries the line
@@ -787,64 +1166,391 @@ const JEV_INSTRUCTIONS: &str = "Which script line is the salesperson currently d
 Match semantic intent, not exact wording. If the speech is off-script, an interruption, or \
 ambiguous, choose the line whose id equals active_line_id in the state.";
 
-/// Stage 2: asks Jev which line is being delivered. Returns `Ok(Some(id))` for a confident
-/// in-window answer, `Ok(None)` when Jev answered but not confidently enough to act (hold
-/// position), and `Err` on transport/parse failure so the caller can degrade stage 2.
+/// Stage 2: asks an LLM (Groq LPU, Cerebras, or Jev System One) which line is being delivered.
+/// Returns `Ok(LlmDecision)` for a confident in-window answer and any detected objection.
 pub async fn classify_with_llm(
     client: &reqwest::Client,
-    api_key: &str,
+    provider: &LlmProvider,
     candidates: &[ScriptLine],
     active: i32,
     spoken: &str,
-) -> Result<Option<i32>, String> {
-    // A Choice's option set lives in `criteria`: each key is an option name (here, the line id)
-    // and each value describes it. Jev returns the chosen key back in `answers.<id>.choice`.
-    let criteria: serde_json::Map<String, serde_json::Value> = candidates
-        .iter()
-        .map(|line| {
-            (
-                line.id.to_string(),
-                serde_json::Value::String(format!("{}: {}", line.label, line.body)),
-            )
-        })
-        .collect();
+) -> Result<LlmDecision, String> {
+    match provider {
+        LlmProvider::Jev(api_key) => {
+            let criteria: serde_json::Map<String, serde_json::Value> = candidates
+                .iter()
+                .map(|line| {
+                    (
+                        line.id.to_string(),
+                        serde_json::Value::String(format!("{}: {}", line.label, line.body)),
+                    )
+                })
+                .collect();
 
-    let body = serde_json::json!({
-        "model": JEV_MODEL,
-        "state": {
-            "active_line_id": active,
-            "spoken_buffer": spoken,
-        },
-        "questions": {
-            "active_line": {
-                "type": "choice",
-                "instructions": JEV_INSTRUCTIONS,
-                "criteria": criteria,
+            let body = serde_json::json!({
+                "model": JEV_MODEL,
+                "state": {
+                    "active_line_id": active,
+                    "spoken_buffer": spoken,
+                },
+                "questions": {
+                    "active_line": {
+                        "type": "choice",
+                        "instructions": JEV_INSTRUCTIONS,
+                        "criteria": criteria,
+                    }
+                }
+            });
+
+            let response = client
+                .post(JEV_URL)
+                .bearer_auth(api_key)
+                .json(&body)
+                .timeout(std::time::Duration::from_millis(LLM_TIMEOUT_MS))
+                .send()
+                .await
+                .map_err(|e| format!("jev request failed: {e}"))?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let text = response.text().await.unwrap_or_default();
+                let short: String = text.chars().take(180).collect();
+                return Err(format!("jev http {status}: {short}"));
             }
+
+            let payload: serde_json::Value = response
+                .json()
+                .await
+                .map_err(|e| format!("jev response not json: {e}"))?;
+            let choice = parse_jev_choice(&payload, candidates)?;
+            Ok(LlmDecision {
+                choice,
+                objection: None,
+            })
+        }
+        LlmProvider::Groq(api_key) | LlmProvider::Cerebras(api_key) => {
+            let (url, model) = match provider {
+                LlmProvider::Groq(_) => (
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    "qwen/qwen3.8-27b",
+                ),
+                LlmProvider::Cerebras(_) => (
+                    "https://api.cerebras.ai/v1/chat/completions",
+                    "llama3.1-8b",
+                ),
+                _ => unreachable!(),
+            };
+
+            let script_flow = candidates
+                .iter()
+                .map(|line| {
+                    let mut s = if line.id == active {
+                        format!(">>> [CURRENT ACTIVE LINE] ID {}: [{}] (Phase: {})\n    Primary Script: \"{}\"", line.id, line.label, line.phase, line.body)
+                    } else {
+                        format!("    ID {}: [{}] (Phase: {})\n    Primary Script: \"{}\"", line.id, line.label, line.phase, line.body)
+                    };
+                    if !line.branches.is_empty() {
+                        s.push_str("\n    Branches / Alternatives:");
+                        for b in &line.branches {
+                            s.push_str(&format!("\n      * If {}: \"{}\"", b.condition, b.response));
+                        }
+                    }
+                    s
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+
+            let system_prompt = format!("\
+You are the real-time AI sales copilot tracking a live, high-stakes sales conversation for Scalix Elite. \
+The salesperson (Gagan from Scalix) is pitching high-ticket inbound growth infrastructure, speed-to-lead automation systems, and qualified booked appointments to business owners (roofing, remodeling, and home services contractors). \
+\
+Call Methodologies: \
+- Cold Call: Permission opener ('Gagan from Scalix... did I catch you in the middle of a job?'), establishing the core problem (slow response time, losing high-margin jobs, shared lead waste), pitching the 10-minute diagnostic audit, and securing the time. \
+- Call 1 (Diagnostic Audit): Clinical diagnosis across 4 revenue buckets (Lead Volume, Speed to Lead, Booking Rate, Average Job Size), uncovering pipeline leaks, creating contrast, and scheduling Call 2 (Prototype Demo). \
+- Call 2 (Closing Call / Prototype Demo): Revealing the custom-built live prototype, demonstrating speed-to-lead and closed-loop ROI, handling price/terms/guarantee, and closing the partnership. \
+\
+{}\
+\
+DECISION GUIDELINES: \
+1. SCRIPT FLOW & LINE SELECTION (`choice`): \
+   - Match semantic intent and meaning, not literal words. Gagan speaks naturally, paraphrases, uses casual slang, and adapts on the fly. \
+   - Look at the full script flow: notice where Gagan is currently positioned (CURRENT ACTIVE LINE) and determine where he is heading. \
+   - If Gagan is speaking the active line or any of its branches, return the active line's ID. \
+   - If Gagan has transitioned into a subsequent line (or jumped to another line), return that line's ID. \
+   - If Gagan is off-script, making casual small talk, handling an interruption, or the speech is ambiguous, return the current active_line_id so the teleprompter remains solidly FROZEN on the active line. \
+\
+2. OBJECTIONS & BATTLECARDS (`objection`): \
+   - If the recent conversation indicates an objection was raised by the prospect OR Gagan is addressing/rebutting an objection (from the 10 battlecards above), set `objection` to that integer (0 to 9). \
+   - If no objection is active, set `objection` to null. \
+\
+3. RESPONSE FORMAT: \
+   Return strictly valid JSON: \
+   {{\"choice\": \"<ID>\", \"objection\": <0..9 or null>, \"confidence\": <0.0 to 1.0>}}", OBJECTION_PROMPT_BLOCK);
+
+            let user_prompt = format!(
+                "Current Active Line ID: {}\n\nFull Script Flow (>>> marks where the salesperson currently is):\n{}\n\nRecently spoken in conversation:\n\"{}\"\n\nIdentify the active script line ID and any active objection:",
+                active, script_flow, spoken
+            );
+
+            let body = serde_json::json!({
+                "model": model,
+                "messages": [
+                    { "role": "system", "content": system_prompt },
+                    { "role": "user", "content": user_prompt }
+                ],
+                "response_format": { "type": "json_object" },
+                "temperature": 0.0,
+                "max_tokens": 60
+            });
+
+            let response = client
+                .post(url)
+                .bearer_auth(api_key)
+                .json(&body)
+                .timeout(std::time::Duration::from_millis(LLM_TIMEOUT_MS))
+                .send()
+                .await
+                .map_err(|e| format!("llm request failed: {e}"))?;
+
+            let status = response.status();
+            if !status.is_success() {
+                let text = response.text().await.unwrap_or_default();
+                let short: String = text.chars().take(180).collect();
+                return Err(format!("llm http {status}: {short}"));
+            }
+
+            let payload: serde_json::Value = response
+                .json()
+                .await
+                .map_err(|e| format!("llm response not json: {e}"))?;
+
+            let content_str = payload
+                .get("choices")
+                .and_then(|c| c.get(0))
+                .and_then(|c0| c0.get("message"))
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_str())
+                .ok_or_else(|| format!("missing content in llm response: {payload}"))?;
+
+            let parsed: serde_json::Value = serde_json::from_str(content_str)
+                .map_err(|e| format!("llm content not valid json: {e}: {content_str}"))?;
+
+            parse_llm_json_decision(&parsed, candidates)
+        }
+    }
+}
+
+pub fn parse_llm_json_choice(
+    payload: &serde_json::Value,
+    candidates: &[ScriptLine],
+) -> Result<Option<i32>, String> {
+    let choice_val = payload
+        .get("choice")
+        .or_else(|| payload.get("active_line_id"))
+        .or_else(|| payload.get("id"));
+
+    let choice_str = choice_val
+        .and_then(|c| {
+            c.as_str()
+                .map(|s| s.to_string())
+                .or_else(|| c.as_i64().map(|n| n.to_string()))
+        })
+        .ok_or_else(|| format!("llm response missing choice: {payload}"))?;
+
+    let chosen = choice_str.trim();
+    let cleaned = chosen
+        .trim_start_matches(|c: char| c == 'I' || c == 'D' || c == 'i' || c == 'd' || c == ':' || c == ' ' || c == '#');
+
+    let id = cleaned
+        .parse::<i32>()
+        .ok()
+        .or_else(|| chosen.parse::<i32>().ok())
+        .or_else(|| {
+            candidates
+                .iter()
+                .find(|c| c.id.to_string() == chosen || c.id.to_string() == cleaned)
+                .map(|c| c.id)
+        })
+        .ok_or_else(|| format!("llm choice was not a known line id: {choice_str}"))?;
+
+    if !candidates.iter().any(|b| b.id == id) {
+        return Err(format!("llm returned out-of-window id {id}"));
+    }
+
+    let confidence = payload
+        .get("confidence")
+        .and_then(|c| c.as_f64())
+        .unwrap_or(0.9);
+
+    if confidence < JEV_MIN_CONFIDENCE {
+        println!("LLM_LOW_CONFIDENCE id={id} confidence={confidence:.3}");
+        return Ok(None);
+    }
+    Ok(Some(id))
+}
+
+pub fn parse_llm_json_decision(
+    payload: &serde_json::Value,
+    candidates: &[ScriptLine],
+) -> Result<LlmDecision, String> {
+    let choice = parse_llm_json_choice(payload, candidates)?;
+
+    let objection = payload.get("objection").and_then(|obj| {
+        if obj.is_null() {
+            None
+        } else if let Some(n) = obj.as_i64() {
+            if (0..=9).contains(&n) {
+                Some(n as i32)
+            } else {
+                None
+            }
+        } else if let Some(s) = obj.as_str() {
+            s.trim().parse::<i32>().ok().filter(|&n| (0..=9).contains(&n))
+        } else {
+            None
         }
     });
 
-    let response = client
-        .post(JEV_URL)
-        .bearer_auth(api_key)
-        .json(&body)
-        .timeout(std::time::Duration::from_millis(LLM_TIMEOUT_MS))
-        .send()
-        .await
-        .map_err(|e| format!("jev request failed: {e}"))?;
+    Ok(LlmDecision { choice, objection })
+}
 
-    let status = response.status();
-    if !status.is_success() {
-        let text = response.text().await.unwrap_or_default();
-        let short: String = text.chars().take(180).collect();
-        return Err(format!("jev http {status}: {short}"));
+struct RepPrefixRule {
+    index: i32,
+    prefixes: &'static [&'static str],
+}
+
+const REP_PREFIX_RULES: &[RepPrefixRule] = &[
+    RepPrefixRule {
+        index: 3, // Don't take cold calls
+        prefixes: &[
+            "neither do i",
+            "neither do we",
+            "neither would i",
+        ],
+    },
+    RepPrefixRule {
+        index: 2, // Not interested / We're good
+        prefixes: &[
+            "i m not surprised",
+            "im not surprised",
+            "not surprised",
+            "haven t got to the good bit",
+            "havent got to the good bit",
+        ],
+    },
+    RepPrefixRule {
+        index: 4, // Where did you get my number?
+        prefixes: &[
+            "our research team",
+            "research team pulls",
+            "public danish registries",
+            "danish registries",
+        ],
+    },
+    RepPrefixRule {
+        index: 5, // Send me an email
+        prefixes: &[
+            "for sure i can email",
+            "sure i can email",
+            "i can email you",
+            "the reason we do the 10 minute",
+            "the reason we do the ten minute",
+        ],
+    },
+    RepPrefixRule {
+        index: 6, // We already have a web/tech guy
+        prefixes: &[
+            "good to hear",
+            "what are they handling right now",
+            "we don t replace your web guy",
+            "we dont replace your web guy",
+            "we don t replace your web",
+            "we dont replace your web",
+        ],
+    },
+    RepPrefixRule {
+        index: 7, // We don't use AI / old-school
+        prefixes: &[
+            "well using ai",
+            "using ai sounds",
+            "using ai sounds unnecessary",
+            "ai sounds unnecessary",
+        ],
+    },
+    RepPrefixRule {
+        index: 8, // Booked out / plenty of work
+        prefixes: &[
+            "the issue when you re slammed",
+            "the issue when youre slammed",
+            "issue when you re slammed",
+            "issue when youre slammed",
+            "cherry picking the highest",
+            "cherrypicking the highest",
+        ],
+    },
+    RepPrefixRule {
+        index: 9, // Busy / on site / driving
+        prefixes: &[
+            "totally get it",
+            "i can hear you re busy",
+            "i can hear youre busy",
+            "busy on site",
+            "won t waste your site",
+            "wont waste your site",
+            "understood when do you",
+        ],
+    },
+    RepPrefixRule {
+        index: 0, // Employee on site / not the owner
+        prefixes: &[
+            "alright i m trying to reach",
+            "alright im trying to reach",
+            "i m trying to reach",
+            "im trying to reach",
+            "dialed the site line",
+            "dialled the site line",
+        ],
+    },
+    RepPrefixRule {
+        index: 1, // Price / Why is it free?
+        prefixes: &[
+            "because we know 80",
+            "because we know eighty",
+            "building relationships and giving upfront",
+            "we are building relationships",
+        ],
+    },
+];
+
+fn normalize_prefix_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push(' ');
+    for ch in text.chars().flat_map(char::to_lowercase) {
+        if ch.is_alphanumeric() {
+            out.push(ch);
+        } else if !out.ends_with(' ') {
+            out.push(' ');
+        }
     }
+    if !out.ends_with(' ') {
+        out.push(' ');
+    }
+    out
+}
 
-    let payload: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| format!("jev response not json: {e}"))?;
-    parse_jev_choice(&payload, candidates)
+/// Detects whether the salesperson just started uttering the opening 2-3 words of an objection rebuttal.
+/// Runs with 0ms latency and 100% priority.
+pub fn detect_rep_objection_prefix(text: &str) -> Option<i32> {
+    let norm = normalize_prefix_text(text);
+    for rule in REP_PREFIX_RULES {
+        for prefix in rule.prefixes {
+            let p_norm = format!(" {} ", prefix.trim());
+            if norm.contains(&p_norm) || norm.trim_start().starts_with(prefix.trim()) {
+                return Some(rule.index);
+            }
+        }
+    }
+    None
 }
 
 /// Extracts the chosen line id and confidence from a Jev decision response body.
@@ -931,6 +1637,7 @@ mod jev_parse_tests {
                 label: "Typical day".into(),
                 raw: "raw".into(),
                 body: "walk me through a typical day".into(),
+                branches: Vec::new(),
             },
             ScriptLine {
                 id: 8,
@@ -938,6 +1645,7 @@ mod jev_parse_tests {
                 label: "Personal time".into(),
                 raw: "raw".into(),
                 body: "where does your personal time go".into(),
+                branches: Vec::new(),
             },
         ]
     }
@@ -979,6 +1687,68 @@ mod jev_parse_tests {
         let payload = serde_json::json!({ "answers": {} });
         assert!(parse_jev_choice(&payload, &candidates()).is_err());
     }
+
+    #[test]
+    fn parses_groq_json_choice_correctly() {
+        use super::parse_llm_json_choice;
+        let payload = serde_json::json!({
+            "choice": "8",
+            "confidence": 0.95
+        });
+        assert_eq!(parse_llm_json_choice(&payload, &candidates()).unwrap(), Some(8));
+    }
+
+    #[test]
+    fn parses_groq_prefixed_choice_and_objection() {
+        use super::parse_llm_json_decision;
+        let payload = serde_json::json!({
+            "choice": "ID 8",
+            "objection": 4,
+            "confidence": 0.95
+        });
+        let decision = parse_llm_json_decision(&payload, &candidates()).unwrap();
+        assert_eq!(decision.choice, Some(8));
+        assert_eq!(decision.objection, Some(4));
+    }
+
+    #[test]
+    fn parses_groq_null_objection() {
+        use super::parse_llm_json_decision;
+        let payload = serde_json::json!({
+            "choice": "7",
+            "objection": null,
+            "confidence": 0.92
+        });
+        let decision = parse_llm_json_decision(&payload, &candidates()).unwrap();
+        assert_eq!(decision.choice, Some(7));
+        assert_eq!(decision.objection, None);
+    }
+
+    #[test]
+    fn rep_prefix_matcher_triggers_instantly() {
+        use super::detect_rep_objection_prefix;
+        assert_eq!(detect_rep_objection_prefix("Neither do I John if I can avoid it"), Some(3));
+        assert_eq!(detect_rep_objection_prefix("I'm not surprised I haven't got to"), Some(2));
+        assert_eq!(detect_rep_objection_prefix("Our research team pulls numbers from public"), Some(4));
+        assert_eq!(detect_rep_objection_prefix("For sure I can email you"), Some(5));
+        assert_eq!(detect_rep_objection_prefix("Good to hear what are they handling"), Some(6));
+        assert_eq!(detect_rep_objection_prefix("Well using AI sounds unnecessary"), Some(7));
+        assert_eq!(detect_rep_objection_prefix("The issue when you're slammed isn't more work"), Some(8));
+        assert_eq!(detect_rep_objection_prefix("Totally get it I can hear you're busy"), Some(9));
+        assert_eq!(detect_rep_objection_prefix("Alright I'm trying to reach his direct mobile"), Some(0));
+        assert_eq!(detect_rep_objection_prefix("Because we know 80% of established firms"), Some(1));
+        assert_eq!(detect_rep_objection_prefix("Good morning how are you"), None);
+    }
+
+    #[test]
+    fn groq_low_confidence_holds_position() {
+        use super::parse_llm_json_choice;
+        let payload = serde_json::json!({
+            "choice": "8",
+            "confidence": 0.3
+        });
+        assert_eq!(parse_llm_json_choice(&payload, &candidates()).unwrap(), None);
+    }
 }
 
 #[cfg(test)]
@@ -1006,19 +1776,18 @@ mod tests {
     #[test]
     fn coldcall_fixture_loads_with_name_and_niche_placeholders() {
         let cold = load_script_by_type("coldcall").unwrap();
-        assert_eq!(cold.lines.len(), 12);
+        assert_eq!(cold.lines.len(), 21);
         assert_eq!(cold.lines[0].id, 1);
-        assert!(cold.lines.iter().any(|l| l.body.contains("[Name]")));
-        assert!(cold.lines.iter().any(|l| l.body.contains("[Niche]")));
+        assert!(cold.lines.iter().any(|l| l.body.contains("[Prospect Name]")));
     }
 
     #[test]
     fn coldcall_placeholders_are_not_counted_as_spoken_words() {
         let cold = load_script_by_type("coldcall").unwrap();
-        let hook = cold.lines.iter().find(|l| l.id == 5).unwrap();
+        let hook = cold.lines.iter().find(|l| l.id == 3).unwrap();
         let words = spoken_content(&hook.raw);
         assert!(
-            !words.iter().any(|w| w == "name" || w == "niche"),
+            !words.iter().any(|w| w == "prospect" || w == "name"),
             "placeholders must not enter the matching vocabulary: {words:?}"
         );
     }
@@ -1028,29 +1797,22 @@ mod tests {
         let cold = load_script_by_type("coldcall").unwrap();
         let mut t = Tracker::new(cold.lines).unwrap();
 
-        // Line 1: New Opener
-        t.push_text("John hi it's Gagan from Scalix Elite");
+        // Line 1: Main Opener
+        t.push_text("hi it's Gagan from Scalix Elite you're not in the middle of a job site right now");
         let (id1, confident1, _) = t.local_match().expect("should match line 1");
         assert_eq!(id1, 1);
         assert!(confident1);
 
-        // Advance to Turn 2 (Line 4)
-        t.consider(4, true);
-        assert_eq!(t.active_id(), 4);
+        // Advance to Turn 2 (Line 2: On-Site Check)
+        t.consider(2, true);
+        assert_eq!(t.active_id(), 2);
 
-        // Line 4: Job site variant
+        // Line 3: The Hook & Assumption
         t.reanchor();
-        t.push_text("You're not in the middle of a job site right now are you");
-        let (id4_job, confident4_job, _) = t.local_match().expect("should match line 4 job site");
-        assert_eq!(id4_job, 4);
-        assert!(confident4_job);
-
-        // Line 4: Viewing variant
-        t.reanchor();
-        t.push_text("You're not in the middle of a viewing right now are you");
-        let (id4_view, confident4_view, _) = t.local_match().expect("should match line 4 viewing");
-        assert_eq!(id4_view, 4);
-        assert!(confident4_view);
+        t.push_text("we work with established remodeling firms across Denmark core crew roughly 4 to 8 people");
+        let (id3, confident3, _) = t.local_match().expect("should match line 3");
+        assert_eq!(id3, 3);
+        assert!(confident3);
     }
 
     #[test]
@@ -1145,12 +1907,38 @@ mod tests {
         // A bad jump left the highlight ahead of the speaker.
         t.consider(5, true);
         assert_eq!(t.active_id(), 5);
-        // Backward correction is deliberately conservative: three confident votes for the line
-        // the speaker is actually on are required, which prevents boundary oscillation.
-        assert_eq!(t.consider(3, true), None);
-        assert_eq!(t.consider(3, true), None);
+        // Confident backward moves (verified with >= 60% match) commit immediately
         assert_eq!(t.consider(3, true), Some(3));
         assert_eq!(t.active_id(), 3);
+    }
+
+    #[test]
+    fn backward_jump_to_passed_line_requires_sixty_percent_match() {
+        let script = load_script_by_type("call1").unwrap();
+        let mut t = Tracker::new(script.lines).unwrap();
+
+        // Advance through lines to line 4 (so last_completed is line 3, not line 1)
+        t.consider(2, true);
+        t.consider(3, true);
+        t.consider(4, true);
+        assert_eq!(t.active_id(), 4);
+
+        // Say only 1 word of line 1: "appreciate" -> low coverage (< 60%)
+        t.push_text("appreciate");
+        let (id_weak, confident_weak, _) = t.local_match().expect("matches line 1");
+        assert_eq!(id_weak, 1);
+        assert!(
+            !confident_weak,
+            "backward match below 60% must not be confident to prevent random shuffling"
+        );
+
+        // Now speak full line 1: "good to meet you appreciate you carving out ten minutes" -> 100% coverage
+        t.push_text("good to meet you appreciate you carving out ten minutes");
+        let (id_strong, confident_strong, _) = t.local_match().expect("matches line 1");
+        assert_eq!(id_strong, 1);
+        assert!(confident_strong, "backward match >= 60% must be confident");
+        assert_eq!(t.consider(id_strong, confident_strong), Some(1));
+        assert_eq!(t.active_id(), 1);
     }
 
     #[test]
@@ -1161,6 +1949,37 @@ mod tests {
         assert_eq!(t.consider(2, false), None);
         assert_eq!(t.consider(2, false), None);
         assert_eq!(t.consider(2, false), Some(2));
+    }
+
+    #[test]
+    fn jumping_forward_multiple_lines_commits_instantly_on_confident_match() {
+        let script = load_script_by_type("call1").unwrap();
+        let mut t = Tracker::new(script.lines).unwrap();
+        assert_eq!(t.active_id(), 1);
+
+        // Speaker jumps directly from line 1 to line 16 (high-value client calls)
+        t.push_text("high value client calls while on site at eight pm who catches that");
+        let (id, confident, _) = t.local_match().expect("should match line 16");
+        assert_eq!(id, 16);
+        assert!(confident, "strong multi-word jump must be confident");
+        assert_eq!(t.consider(id, confident), Some(16));
+        assert_eq!(t.active_id(), 16);
+    }
+
+    #[test]
+    fn jumping_backward_from_later_line_commits_cleanly() {
+        let script = load_script_by_type("call1").unwrap();
+        let mut t = Tracker::new(script.lines).unwrap();
+        t.consider(5, true);
+        assert_eq!(t.active_id(), 5);
+
+        // Speaker jumps back to line 2 (Not here to pitch)
+        t.push_text("just to set the stage so we use our time well I'm not here to pitch you anything today");
+        let (id, confident, _) = t.local_match().expect("should match line 2");
+        assert_eq!(id, 2);
+        assert!(confident, "strong backward jump must be confident");
+        assert_eq!(t.consider(id, confident), Some(2));
+        assert_eq!(t.active_id(), 2);
     }
 
     #[test]
@@ -1544,5 +2363,61 @@ mod tests {
                 "cue marker '{marker}' leaked into the vocabulary: {words:?}"
             );
         }
+    }
+
+    #[test]
+    fn words_match_handles_stems_and_fuzzy_typos() {
+        assert!(super::words_match("calls", "call"));
+        assert!(super::words_match("leaking", "leak"));
+        assert!(super::words_match("projects", "project"));
+        assert!(super::words_match("booked", "booking"));
+        assert!(super::words_match("scalex", "scalix"));
+        assert!(super::words_match("customised", "customized"));
+        assert!(!super::words_match("sell", "tell"));
+        assert!(!super::words_match("call", "fall"));
+    }
+
+    #[test]
+    fn numbers_normalize_and_match_spoken_words() {
+        let mut t = tracker();
+        assert_eq!(t.active_id(), 1);
+
+        // Line 1 raw text is "...Appreciate you carving out 10 minutes".
+        // The speaker says "ten minutes" with numbers spoken as words.
+        t.push_text("good to meet you appreciate you carving out ten minutes");
+        let (id, confident, _) = t
+            .local_match()
+            .expect("should match line 1 with spoken numbers");
+        assert_eq!(id, 1);
+        assert!(confident);
+    }
+
+    #[test]
+    fn fuzzy_asr_phonetics_advance_line_two_cleanly() {
+        let script = load_script_by_type("call1").unwrap();
+        let mut t = Tracker::new(script.lines).unwrap();
+        t.move_to_index(1);
+        assert_eq!(t.active_id(), 2);
+
+        // ASR hears slight typo on line 2 ("pich" instead of "pitch")
+        t.set_partial("just to set the stage so we use our time well i'm not here to pich you anything today");
+        assert!(
+            t.active_line_spoken_out(),
+            "line 2 should complete live despite minor ASR typo"
+        );
+        let next = t.complete_active();
+        assert_eq!(next, Some(3));
+        assert_eq!(t.active_id(), 3);
+    }
+
+    #[test]
+    fn tracker_vocabulary_includes_domain_and_script_terms() {
+        let cold = load_script_by_type("coldcall").unwrap();
+        let t = Tracker::new(cold.lines).unwrap();
+        let vocab = t.vocabulary();
+        assert!(vocab.iter().any(|v| v.eq_ignore_ascii_case("scalix")));
+        assert!(vocab.iter().any(|v| v.eq_ignore_ascii_case("gagan")));
+        assert!(vocab.iter().any(|v| v.eq_ignore_ascii_case("denmark")));
+        assert!(vocab.iter().any(|v| v.eq_ignore_ascii_case("operations")));
     }
 }

@@ -73,6 +73,67 @@ body {
   background: #d4af37;
 }
 
+/* Tree branch edge cases: dashed branches extending from the centre line */
+.tree-branches {
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 2px dashed rgba(212, 175, 55, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.tree-branch-node {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 4px 8px;
+  text-shadow: none;
+}
+
+.line[data-state="active"] .tree-branch-node {
+  background: rgba(212, 175, 55, 0.07);
+  border-color: rgba(212, 175, 55, 0.3);
+}
+
+.branch-cond {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-bottom: 2px;
+}
+
+.branch-elbow {
+  color: #ffd700;
+  font-weight: 700;
+  font-size: 11px;
+}
+
+.branch-cond-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #ffd700;
+  opacity: 0.9;
+}
+
+.branch-reply {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.3;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.line[data-state="active"] .branch-reply {
+  color: #ffffff;
+}
+
+.line[data-state="past"] .tree-branches,
+.line[data-state="future"] .tree-branches {
+  opacity: 0.6;
+}
+
 /* Phase heading, shown only when the phase changes so the grouping stays legible. */
 .phase {
   font-size: 8px;
@@ -650,4 +711,539 @@ body {
   text-align: center;
 }
 
+.objection-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 4px 6px;
+  background: rgba(15, 15, 18, 0.7);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
 
+.objection-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 8px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.15s ease;
+}
+
+.objection-chip:hover {
+  background: rgba(212, 175, 55, 0.2);
+  border-color: rgba(212, 175, 55, 0.4);
+  color: #ffd479;
+}
+
+.objection-chip.active {
+  background: rgba(212, 175, 55, 0.35);
+  border-color: #ffd479;
+  color: #fff;
+  font-weight: 700;
+}
+
+.chip-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700;
+  font-size: 7.5px;
+  color: #ffd479;
+  background: rgba(0, 0, 0, 0.5);
+  padding: 0 3px;
+  border-radius: 2px;
+}
+
+.chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 85px;
+}
+
+/* ==========================================================================
+   SCALIX ELITE FLOWCHART SHEET (COLD CALL MODE)
+   ========================================================================== */
+
+:root {
+  --fc-gold: #c9a24b;
+  --fc-gold-glow: rgba(201, 162, 75, 0.35);
+  --fc-panel: #17171b;
+  --fc-panel-2: #1e1e24;
+  --fc-side-line: #5a5140;
+  --fc-ink: #f1ece2;
+  --fc-muted: #a39d91;
+}
+
+.flowchart-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 16px 20px 48px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  height: 100%;
+  box-sizing: border-box;
+  scroll-behavior: smooth;
+  scroll-padding: 80px 0;
+}
+
+/* Custom scrollbar for easy glancing */
+.flowchart-sheet::-webkit-scrollbar {
+  width: 6px;
+}
+.flowchart-sheet::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+.flowchart-sheet::-webkit-scrollbar-thumb {
+  background: var(--fc-side-line);
+  border-radius: 3px;
+}
+.flowchart-sheet::-webkit-scrollbar-thumb:hover {
+  background: var(--fc-gold);
+}
+
+.flowchart-intro {
+  text-align: center;
+  color: var(--fc-muted);
+  font-size: 11.5px;
+  line-height: 1.45;
+  background: rgba(201, 162, 75, 0.05);
+  border: 1px dashed rgba(201, 162, 75, 0.25);
+  border-radius: 8px;
+  padding: 8px 14px;
+  margin-bottom: 8px;
+}
+
+.flowchart-row {
+  display: grid;
+  grid-template-columns: 1fr 380px 1fr;
+  gap: 0 24px;
+  align-items: start;
+  position: relative;
+  margin-bottom: 28px;
+  border-radius: 14px;
+  padding: 6px;
+  transition: all 0.25s ease;
+}
+
+.flowchart-row.current-row {
+  background: rgba(201, 162, 75, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(201, 162, 75, 0.3);
+}
+
+.flowchart-side {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: relative;
+}
+.flowchart-side.left {
+  align-items: flex-end;
+}
+.flowchart-side.right {
+  align-items: flex-start;
+}
+
+.flowchart-center {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.flowchart-center::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 2px;
+  height: 28px;
+  background: var(--fc-gold);
+  opacity: 0.55;
+  transform: translateX(-50%);
+}
+.flowchart-row:last-child .flowchart-center::after {
+  display: none;
+}
+
+.flowchart-step {
+  background: var(--fc-panel);
+  border: 1px solid var(--fc-gold);
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: 0 0 0 3px rgba(201, 162, 75, 0.08);
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+.flowchart-step:hover {
+  border-color: #ffd479;
+}
+.flowchart-step.active {
+  box-shadow: 0 0 0 4px var(--fc-gold-glow), 0 0 16px rgba(201, 162, 75, 0.25);
+  background: #1c1a16;
+}
+
+.step-num {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fc-gold);
+  margin-bottom: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.flowchart-say {
+  margin: 0 0 8px;
+  font-size: 13.5px;
+  line-height: 1.48;
+  color: var(--fc-ink);
+}
+.flowchart-say:last-child {
+  margin-bottom: 0;
+}
+.flowchart-say strong {
+  font-weight: 700;
+  color: #fff;
+}
+.flowchart-say em {
+  font-style: italic;
+  color: #ffd479;
+}
+
+.flowchart-stop {
+  display: inline-block;
+  font-size: 13px;
+  background: #3a2a10;
+  border-left: 3px solid var(--fc-gold);
+  padding: 2px 7px;
+  border-radius: 4px;
+  margin: 6px 0;
+  color: #f5c77a;
+}
+
+.flowchart-note {
+  font-size: 11.5px;
+  color: var(--fc-muted);
+  margin: 6px 0 0;
+  line-height: 1.4;
+}
+
+.flowchart-prospect {
+  font-size: 12px;
+  color: #c4beaf;
+  font-style: italic;
+  margin: 0 0 6px;
+  padding: 3px 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 2px solid #6b6352;
+  border-radius: 3px;
+}
+
+.flowchart-obj {
+  width: 100%;
+  max-width: 440px;
+  background: var(--fc-panel-2);
+  border: 1px dashed var(--fc-side-line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  position: relative;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  cursor: pointer;
+}
+.flowchart-obj:hover {
+  border-color: var(--fc-gold);
+  background: #232228;
+}
+
+/* Horizontal connectors to center gold spine */
+.flowchart-side.left .flowchart-obj::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  right: -24px;
+  width: 24px;
+  height: 2px;
+  background: var(--fc-side-line);
+}
+.flowchart-side.right .flowchart-obj::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: -24px;
+  width: 24px;
+  height: 2px;
+  background: var(--fc-side-line);
+}
+
+/* OBJECTION "IN THE WAY" POP */
+.flowchart-obj.active {
+  background: #252219 !important;
+  border: 2px solid var(--fc-gold) !important;
+  border-style: solid !important;
+  box-shadow: 0 0 24px rgba(201, 162, 75, 0.5), inset 0 0 0 1px var(--fc-gold) !important;
+  transform: scale(1.025);
+  z-index: 15;
+}
+.flowchart-obj.active::after,
+.flowchart-obj.active::before {
+  background: var(--fc-gold) !important;
+  height: 3px !important;
+}
+
+.obj-head {
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fc-gold);
+  margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.obj-pop-badge {
+  background: var(--fc-gold);
+  color: #0d0d0f;
+  font-size: 8.5px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  animation: pulse-gold 1.5s infinite;
+}
+
+@keyframes pulse-gold {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.05); }
+}
+
+.obj-if {
+  font-size: 12.5px;
+  font-weight: 700;
+  margin: 0 0 5px;
+  color: #fff;
+}
+
+/* Dynamic Day Badges */
+.day-chips-container {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0;
+  flex-wrap: wrap;
+}
+.day-chip {
+  background: rgba(201, 162, 75, 0.12);
+  border: 1px solid rgba(201, 162, 75, 0.35);
+  color: #ffd479;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+@media (max-width: 900px) {
+  .flowchart-row {
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .flowchart-center::after {
+    display: none;
+  }
+  .flowchart-side {
+    align-items: stretch !important;
+  }
+  .flowchart-obj {
+    max-width: none;
+    border-style: solid;
+    border-color: #3a3428;
+    border-left: 3px solid var(--fc-gold);
+  }
+  .flowchart-side.left .flowchart-obj::after,
+  .flowchart-side.right .flowchart-obj::before {
+    display: none;
+  }
+  .flowchart-side:empty {
+    display: none;
+  }
+}
+
+
+
+/* The name the dialer injected: visible proof it landed, without reading Turn 1. */
+.lead-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(212, 175, 55, 0.45);
+  color: #e8cf7a;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+/* ---------------------------------------------------------------------------
+   Cold-call flowchart. Three columns: 1fr 380px 1fr. The centre column is the
+   gold line and is the only place the highlight lives; the side columns hold
+   the objection cards. Every column scrolls independently and smoothly.
+   --------------------------------------------------------------------------- */
+.flow {
+  display: grid;
+  grid-template-columns: 1fr 380px 1fr;
+  gap: 10px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.flow-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+  padding: 42vh 2px;
+  scroll-behavior: smooth;
+}
+
+.flow-col::-webkit-scrollbar {
+  display: none;
+}
+
+.flow-col--center {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.flow-card {
+  position: relative;
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  transition: background 180ms ease, border-color 180ms ease, color 180ms ease,
+    transform 180ms ease, box-shadow 180ms ease;
+  cursor: pointer;
+}
+
+.flow-card:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.flow-card:focus-visible {
+  outline: 2px solid rgba(212, 175, 55, 0.8);
+  outline-offset: 2px;
+}
+
+.flow-card--branch {
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.flow-card--center .flow-copy {
+  font-size: 13px;
+  line-height: 1.38;
+}
+
+/* The gold line. One visual destination for the eye, whatever the call does. */
+.flow-card[data-active="true"] {
+  background: rgba(212, 175, 55, 0.16);
+  border-color: #d4af37;
+  color: #fff8e1;
+  box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.55), 0 8px 26px rgba(0, 0, 0, 0.45);
+  transform: translateY(-1px);
+}
+
+.flow-card[data-active="true"] .flow-label,
+.flow-card[data-active="true"] .flow-turn {
+  color: #ffd76a;
+}
+
+.flow-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.flow-turn {
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: rgba(212, 175, 55, 0.85);
+  white-space: nowrap;
+}
+
+.flow-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.01em;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.flow-trigger {
+  font-size: 10.5px;
+  font-style: italic;
+  color: rgba(255, 255, 255, 0.5);
+  margin-bottom: 5px;
+}
+
+.flow-copy {
+  margin: 0;
+}
+
+.flow-beat {
+  margin: 0 0 4px;
+}
+
+.flow-beat:last-child {
+  margin-bottom: 0;
+}
+
+.flow-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.flow-days span {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(212, 175, 55, 0.16);
+  border: 1px solid rgba(212, 175, 55, 0.35);
+}
+
+.flow-days strong {
+  color: #ffd76a;
+  font-weight: 700;
+}
+
+.flow-next {
+  margin-top: 6px;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.38);
+}

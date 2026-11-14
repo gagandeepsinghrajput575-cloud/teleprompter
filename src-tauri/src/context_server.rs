@@ -9,6 +9,56 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Mutex;
 use tauri::Emitter;
+use tokio_tungstenite::tungstenite::{self, Message};
+
+static CURRENT_PROSPECT_STOP: Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>> =
+    Mutex::new(None);
+
+fn handle_prospect_ws(stream: TcpStream, app: &tauri::AppHandle) {
+    let mut ws = match tungstenite::accept(stream) {
+        Ok(ws) => ws,
+        Err(err) => {
+            eprintln!("PROSPECT_WS_HANDSHAKE_FAIL: {err}");
+            return;
+        }
+    };
+    println!("PROSPECT_WS_CONNECTED");
+
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if let Ok(mut lock) = CURRENT_PROSPECT_STOP.lock() {
+        if let Some(prev) = lock.take() {
+            prev.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        *lock = Some(stop.clone());
+    }
+
+    let (audio_tx, audio_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+    crate::spawn_prospect_pipeline(app, audio_rx, stop.clone());
+
+    while let Ok(msg) = ws.read() {
+        if stop.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
+        match msg {
+            Message::Binary(bin) => {
+                let samples: Vec<i16> = bin
+                    .chunks_exact(2)
+                    .map(|c| i16::from_le_bytes([c[0], c[1]]))
+                    .collect();
+                if !samples.is_empty() {
+                    let _ = audio_tx.send(samples);
+                }
+            }
+            Message::Close(_) => break,
+            Message::Ping(p) => {
+                let _ = ws.send(Message::Pong(p));
+            }
+            _ => {}
+        }
+    }
+    stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    println!("PROSPECT_WS_DISCONNECTED");
+}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CallContext {
@@ -27,6 +77,16 @@ static CONTEXT: Mutex<Option<CallContext>> = Mutex::new(None);
 /// The most recent context the dialer pushed, so a UI that subscribes late can still fetch it.
 pub fn current() -> Option<CallContext> {
     CONTEXT.lock().ok().and_then(|slot| slot.clone())
+}
+
+/// Updates just the prospect name (e.g. from lead listener) while retaining any existing company/niche.
+pub fn update_prospect_name(name: String) -> CallContext {
+    let mut ctx = CONTEXT.lock().ok().and_then(|s| s.clone()).unwrap_or_default();
+    ctx.name = name;
+    if let Ok(mut slot) = CONTEXT.lock() {
+        *slot = Some(ctx.clone());
+    }
+    ctx
 }
 
 /// Parses the JSON body of a `/context` request. Pure so it can be unit-tested without sockets.
@@ -101,6 +161,15 @@ fn read_request(stream: &mut TcpStream) -> Option<(String, String, String)> {
 }
 
 fn handle(mut stream: TcpStream, app: &tauri::AppHandle) {
+    let mut peek_buf = [0u8; 64];
+    let n = stream.peek(&mut peek_buf).unwrap_or(0);
+    let peek_str = String::from_utf8_lossy(&peek_buf[..n]);
+
+    if peek_str.starts_with("GET /prospect") {
+        handle_prospect_ws(stream, app);
+        return;
+    }
+
     let Some((request_line, headers, body)) = read_request(&mut stream) else {
         respond(&mut stream, 400, "{\"ok\":false}");
         return;
@@ -202,5 +271,15 @@ mod tests {
     #[test]
     fn rejects_malformed_json_without_panicking() {
         assert!(parse_context(b"{not json}").is_err());
+    }
+
+    #[test]
+    fn converts_pcm16_binary_chunks_correctly() {
+        let raw_bytes: [u8; 4] = [0x00, 0x00, 0x01, 0x00];
+        let samples: Vec<i16> = raw_bytes
+            .chunks_exact(2)
+            .map(|c| i16::from_le_bytes([c[0], c[1]]))
+            .collect();
+        assert_eq!(samples, vec![0, 1]);
     }
 }

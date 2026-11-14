@@ -22,6 +22,11 @@ extern "C" {
     ) -> *mut c_void;
     fn apple_speech_feed_audio(session: *mut c_void, samples: *const i16, count: usize);
     fn apple_speech_rotate_request(session: *mut c_void);
+    fn apple_speech_set_contextual_strings(
+        session: *mut c_void,
+        strings: *const *const c_char,
+        count: usize,
+    );
     fn apple_speech_stop(session: *mut c_void);
 }
 
@@ -51,7 +56,7 @@ pub fn ensure_permission() -> Result<(), String> {
     println!("APPLE_SPEECH_PERMISSION status={:?}", status);
     if status == AppleSpeechPermission::NotDetermined {
         println!("APPLE_SPEECH_PERMISSION prompting user");
-        status = AppleSpeechPermission::from_i32(unsafe { apple_speech_request_permission(60.0) });
+        status = AppleSpeechPermission::from_i32(unsafe { apple_speech_request_permission(2.5) });
         println!("APPLE_SPEECH_PERMISSION status_after_prompt={:?}", status);
     }
     match status {
@@ -184,6 +189,7 @@ pub async fn run(
     mut audio_rx: UnboundedReceiver<Vec<i16>>,
     event_tx: UnboundedSender<SttEvent>,
     stop_flag: Arc<AtomicBool>,
+    vocabulary: Vec<String>,
 ) {
     if let Err(err) = ensure_permission() {
         eprintln!("APPLE_SPEECH_PERM_FAIL {err}");
@@ -218,6 +224,21 @@ pub async fn run(
     }
 
     let session_addr = session as usize;
+
+    if !vocabulary.is_empty() {
+        let c_strings: Vec<std::ffi::CString> = vocabulary
+            .iter()
+            .filter_map(|s| std::ffi::CString::new(s.as_str()).ok())
+            .collect();
+        let ptrs: Vec<*const c_char> = c_strings.iter().map(|cs| cs.as_ptr()).collect();
+        unsafe {
+            apple_speech_set_contextual_strings(session, ptrs.as_ptr(), ptrs.len());
+        }
+        println!(
+            "APPLE_SPEECH_CONTEXTUAL_STRINGS configured count={}",
+            ptrs.len()
+        );
+    }
 
     println!("APPLE_SPEECH_ACTIVE engine=on-device");
     let _ = event_tx.send(SttEvent::Connected);

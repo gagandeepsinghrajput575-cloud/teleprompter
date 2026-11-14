@@ -39,7 +39,7 @@ mod imp {
     }
 
     extern "C" fn on_digit(digit: c_int) -> c_int {
-        if !ARMED.load(Ordering::SeqCst) || !LISTENING.load(Ordering::SeqCst) {
+        if !ARMED.load(Ordering::SeqCst) {
             return 0; // pass the keystroke through untouched
         }
         if let Ok(guard) = APP.lock() {
@@ -48,7 +48,13 @@ mod imp {
                 let _ = app.emit("objection", digit);
             }
         }
-        1 // swallow: the digit must not be typed into the dialer
+        // Only swallow the keystroke during an active listening session so it is not typed into the dialer.
+        // When not in an active call, let it pass through while still popping up the battlecard.
+        if LISTENING.load(Ordering::SeqCst) {
+            1
+        } else {
+            0
+        }
     }
 
     pub fn start() -> Result<(), String> {

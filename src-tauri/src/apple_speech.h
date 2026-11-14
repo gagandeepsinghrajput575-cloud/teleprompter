@@ -38,6 +38,9 @@ void apple_speech_feed_audio(AppleSpeechSessionRef session_ref, const int16_t *s
 /// without buffer accumulation or hitting duration limits.
 void apple_speech_rotate_request(AppleSpeechSessionRef session_ref);
 
+/// Sets contextual strings to bias Apple Speech recognition towards domain vocabulary.
+void apple_speech_set_contextual_strings(AppleSpeechSessionRef session_ref, const char **strings, size_t count);
+
 /// Stops and frees the speech recognition session.
 void apple_speech_stop(AppleSpeechSessionRef session_ref);
 

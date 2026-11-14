@@ -9,6 +9,15 @@ export type Annotation =
   | { kind: "pace"; value: Exclude<Pace, "normal"> }
   | { kind: "pause"; ms: number };
 
+export type ScriptBranch = {
+  condition: string;
+  response: string;
+  side?: "left" | "right" | "center" | string;
+  head?: string;
+  prospect?: string;
+  note?: string;
+};
+
 export type ScriptLine = {
   id: number;
   phase: string;
@@ -19,6 +28,7 @@ export type ScriptLine = {
   body: string;
   cue: Cue;
   annotations: Annotation[];
+  branches?: ScriptBranch[];
 };
 
 export type Script = {
@@ -149,6 +159,7 @@ export function loadScript(raw: RawScript): Script {
         body,
         cue,
         annotations,
+        branches: line.branches,
       };
     }),
   };

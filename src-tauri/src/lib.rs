@@ -11,6 +11,7 @@ mod apple_stt;
 mod audio;
 mod bare_keys;
 mod keys;
+mod lead;
 #[cfg(target_os = "macos")]
 mod mic_permission;
 mod objection_detect;
@@ -466,25 +467,34 @@ fn begin_session(
     let is_apple = engine_mode == "apple";
 
     let deepgram_key = keys::get("DEEPGRAM_API_KEY");
-    // Jev (TypeSafe "System One") is reached through OpenRouter, so the key is an OpenRouter
-    // key. Accept either name so the docs' `OPENROUTER_API_KEY` and a `JEV_API_KEY` both work.
-    let jev_key = keys::get("JEV_API_KEY").or_else(|| keys::get("OPENROUTER_API_KEY"));
+    let llm_provider = keys::get("GROQ_API_KEY")
+        .map(tracker::LlmProvider::Groq)
+        .or_else(|| keys::get("CEREBRAS_API_KEY").map(tracker::LlmProvider::Cerebras))
+        .or_else(|| {
+            keys::get("JEV_API_KEY")
+                .or_else(|| keys::get("OPENROUTER_API_KEY"))
+                .map(tracker::LlmProvider::Jev)
+        });
 
     if !is_apple && deepgram_key.is_none() {
         return Err("DEEPGRAM_API_KEY not found in env or Keychain".to_string());
     }
 
     println!(
-        "KEYS engine={} deepgram={} jev={}",
+        "KEYS engine={} deepgram={} llm={}",
         engine_mode,
         deepgram_key
             .as_deref()
             .map(keys::mask)
             .unwrap_or_else(|| "none".to_string()),
-        jev_key
-            .as_deref()
-            .map(keys::mask)
-            .unwrap_or_else(|| "missing".to_string())
+        llm_provider
+            .as_ref()
+            .map(|p| match p {
+                tracker::LlmProvider::Groq(k) => format!("groq({})", keys::mask(k)),
+                tracker::LlmProvider::Cerebras(k) => format!("cerebras({})", keys::mask(k)),
+                tracker::LlmProvider::Jev(k) => format!("jev({})", keys::mask(k)),
+            })
+            .unwrap_or_else(|| "none".to_string())
     );
 
     let stop = Arc::new(AtomicBool::new(false));
@@ -506,13 +516,30 @@ fn begin_session(
     *state.audio_tx.lock().unwrap() = Some(audio_tx);
 
     let (stt_tx, mut stt_rx) = mpsc::unbounded_channel();
+    let mut actual_is_apple = is_apple;
     if is_apple {
         #[cfg(target_os = "macos")]
         {
-            let stop_flag = stop.clone();
-            tauri::async_runtime::spawn(async move {
-                apple_stt::run(audio_rx, stt_tx, stop_flag).await;
-            });
+            let apple_perm = apple_stt::ensure_permission();
+            if let Err(perm_err) = apple_perm {
+                if let Some(dg) = deepgram_key.clone() {
+                    println!(
+                        "APPLE_SPEECH unavailable ({perm_err}); falling back to Deepgram Nova-3"
+                    );
+                    actual_is_apple = false;
+                    tauri::async_runtime::spawn(async move {
+                        stt::run(dg, audio_rx, stt_tx).await;
+                    });
+                } else {
+                    return Err(perm_err);
+                }
+            } else {
+                let stop_flag = stop.clone();
+                let vocab = state.tracker.lock().unwrap().vocabulary();
+                tauri::async_runtime::spawn(async move {
+                    apple_stt::run(audio_rx, stt_tx, stop_flag, vocab).await;
+                });
+            }
         }
         #[cfg(not(target_os = "macos"))]
         {
@@ -583,12 +610,13 @@ fn begin_session(
 
     let tracker_arc = state.tracker.clone();
     let http = state.http.clone();
-    let llm_key = jev_key.clone();
+    let llm_provider_slot = llm_provider.clone();
     let app_handle: tauri::AppHandle = (*app).clone();
 
     tauri::async_runtime::spawn(async move {
         let mut llm_failures: u32 = 0;
         let mut last_llm: Option<std::time::Instant> = None;
+        let mut last_rep_obj: Option<(i32, std::time::Instant)> = None;
         // Routing decisions are logged on every interim word, which is a lot of file I/O during a
         // call. Opt in with STEALTH_VERBOSE=1 when diagnosing.
         let verbose = std::env::var("STEALTH_VERBOSE").is_ok();
@@ -608,6 +636,20 @@ fn begin_session(
             };
 
             let _ = app_handle.emit("transcript", &transcript);
+
+            // Tier 0 Fast-Path: Rep speaks 2-3 words of an objection rebuttal.
+            // 0ms latency, highest priority over prospect speech.
+            if let Some(obj_idx) = tracker::detect_rep_objection_prefix(&transcript.text) {
+                let now = std::time::Instant::now();
+                let should_emit = last_rep_obj.map_or(true, |(prev_idx, prev_at)| {
+                    prev_idx != obj_idx || now.duration_since(prev_at) >= std::time::Duration::from_secs(4)
+                });
+                if should_emit {
+                    last_rep_obj = Some((obj_idx, now));
+                    println!("REP_OBJECTION_PREFIX matched index={obj_idx} text=\"{}\"", transcript.text);
+                    let _ = app_handle.emit("objection", obj_idx);
+                }
+            }
 
             let mut committed: Option<(i32, &'static str)> = None;
 
@@ -641,7 +683,7 @@ fn begin_session(
                         tr.local_match(),
                         tr.spoken_buffer(),
                         tr.active_id(),
-                        tr.candidate_window(),
+                        tr.all_lines(),
                     ))
                 } else {
                     None
@@ -664,67 +706,80 @@ fn begin_session(
                 // off-script speech, which is exactly what the model is meant to prevent.
                 let mut proposal: Option<i32> = None;
                 let mut decided_by_llm = false;
-                // Interims make cycles frequent; without this throttle an ambiguous buffer
-                // would fire a model request every few hundred milliseconds.
+                // Groq LPU runs in ~150ms; 250ms throttle provides near-instantaneous routing without flooding.
                 let llm_ready =
-                    last_llm.map_or(true, |at| at.elapsed() >= Duration::from_millis(700));
-                if let Some(key) = llm_key.as_ref() {
+                    last_llm.map_or(true, |at| at.elapsed() >= Duration::from_millis(250));
+                if let Some(ref provider) = llm_provider_slot {
                     if llm_failures < 3 && llm_ready {
                         last_llm = Some(std::time::Instant::now());
+                        let provider_name = match provider {
+                            tracker::LlmProvider::Groq(_) => "groq",
+                            tracker::LlmProvider::Cerebras(_) => "cerebras",
+                            tracker::LlmProvider::Jev(_) => "jev",
+                        };
                         println!(
-                            "TRACKER_ROUTE stage2-jev active={active} buffer_words={}",
+                            "TRACKER_ROUTE stage2-{provider_name} active={active} buffer_words={}",
                             buffer.split_whitespace().count()
                         );
-                        match tracker::classify_with_llm(&http, key, &candidates, active, &buffer)
+                        match tracker::classify_with_llm(&http, provider, &candidates, active, &buffer)
                             .await
                         {
-                            Ok(Some(id)) => {
+                            Ok(decision) => {
                                 llm_failures = 0;
-                                proposal = Some(id);
+                                proposal = decision.choice;
                                 decided_by_llm = true;
-                                println!("TRACKER_JEV_OK active={id}");
-                            }
-                            Ok(None) => {
-                                // Jev answered but below the confidence floor: hold position.
-                                llm_failures = 0;
-                                println!("TRACKER_JEV_UNSURE active={active}");
+                                if let Some(obj) = decision.objection {
+                                    println!("TRACKER_LLM_OBJECTION ({provider_name}) objection={obj}");
+                                    let _ = app_handle.emit("objection", obj);
+                                }
+                                if let Some(id) = decision.choice {
+                                    println!("TRACKER_LLM_OK ({provider_name}) active={id}");
+                                } else {
+                                    println!("TRACKER_LLM_UNSURE ({provider_name}) active={active}");
+                                }
                             }
                             Err(err) => {
                                 llm_failures += 1;
-                                eprintln!("TRACKER_JEV_ERROR n={llm_failures} {err}");
+                                eprintln!("TRACKER_LLM_ERROR ({provider_name}) n={llm_failures} {err}");
                             }
                         }
                     } else if verbose {
                         println!("TRACKER_ROUTE stage1-local (llm throttled or circuit open)");
                     }
                 } else if verbose {
-                    println!("TRACKER_ROUTE stage1-local (no jev key)");
+                    println!("TRACKER_ROUTE stage1-local (no llm key)");
                 }
                 if let Some(id) = proposal {
-                    // Restrict LLM proposals to immediate forward candidates (active + 1 .. active + 3)
-                    // so an LLM hallucination cannot jump to random distant lines:
-                    if id > active && id <= active + 3 {
+                    if id != active {
                         if let Some(new_id) = tracker_arc.lock().unwrap().consider(id, false) {
                             committed = Some((
                                 new_id,
                                 if decided_by_llm {
-                                    "stage2-jev"
+                                    if id > active {
+                                        "stage2-llm"
+                                    } else {
+                                        "stage2-llm-back"
+                                    }
                                 } else {
                                     "stage1-local"
                                 },
                             ));
                         }
                     } else {
-                        println!(
-                            "TRACKER_RETAIN active={active} reason=llm-out-of-bounds proposed={id}"
-                        );
+                        // id == active: Groq explicitly confirmed staying frozen on the active line.
+                        println!("TRACKER_FREEZE active={active} confirmed by LLM");
                     }
-                } else if verbose {
-                    // Ambiguous or off-script and no model verdict: hold position.
-                    println!(
-                        "TRACKER_RETAIN active={active} reason=no-model-decision buffer_words={}",
-                        buffer.split_whitespace().count()
-                    );
+                } else if llm_provider_slot.is_none() {
+                    // Only fall back to local hysteresis if NO LLM key is configured.
+                    // When Groq is active and local is confused, FREEZE on the current line.
+                    if let Some((local_id, confident, _)) = local {
+                        if let Some(new_id) = tracker_arc.lock().unwrap().consider(local_id, confident)
+                        {
+                            committed = Some((new_id, "stage1-hysteresis"));
+                        }
+                    }
+                } else {
+                    println!("TRACKER_FREEZE active={active} (LLM holding position)");
                 }
             } else if let Some((id, _, _)) = local {
                 // Stage 1 was unambiguous: commit without paying for a model call.
@@ -746,7 +801,7 @@ fn begin_session(
         format!(
             "listening on {} ({})",
             stats.device,
-            if is_apple {
+            if actual_is_apple {
                 "Apple Neural Engine"
             } else {
                 "Deepgram Nova-3"
@@ -760,9 +815,13 @@ fn begin_session(
 
     Ok(SessionInfo {
         device: stats,
-        engine: engine_mode,
-        deepgram: !is_apple,
-        jev: jev_key.is_some(),
+        engine: if actual_is_apple {
+            "apple".to_string()
+        } else {
+            "deepgram".to_string()
+        },
+        deepgram: !actual_is_apple,
+        jev: llm_provider.is_some(),
     })
 }
 
@@ -799,6 +858,70 @@ fn stop_session(app: tauri::AppHandle) -> Result<(), String> {
 
 /// True while the *prospect* (system-audio) capture is running.
 static PROSPECT_AUDIO_RUNNING: AtomicBool = AtomicBool::new(false);
+
+pub fn spawn_prospect_pipeline(
+    app: &tauri::AppHandle,
+    rx: mpsc::UnboundedReceiver<Vec<i16>>,
+    stop: Arc<AtomicBool>,
+) {
+    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<stt::SttEvent>();
+    let vocab = app
+        .try_state::<AppState>()
+        .map(|s| s.tracker.lock().unwrap().vocabulary())
+        .unwrap_or_default();
+
+    let deepgram_key = keys::get("DEEPGRAM_API_KEY");
+
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(()) = apple_stt::ensure_permission() {
+            let stop_flag = stop.clone();
+            tauri::async_runtime::spawn(apple_stt::run(rx, event_tx, stop_flag, vocab));
+        } else if let Some(dg) = deepgram_key {
+            tauri::async_runtime::spawn(stt::run(dg, rx, event_tx));
+        } else {
+            eprintln!("PROSPECT_PIPELINE: no speech recognizer available");
+            return;
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if let Some(dg) = deepgram_key {
+            tauri::async_runtime::spawn(stt::run(dg, rx, event_tx));
+        } else {
+            eprintln!("PROSPECT_PIPELINE: Deepgram key required on non-macOS");
+            return;
+        }
+    }
+
+    let emit_to = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let mut recent = objection_detect::Recent::new();
+        let mut tail = String::new();
+        while let Some(event) = event_rx.recv().await {
+            match event {
+                stt::SttEvent::Transcript(t) => {
+                    let _ = emit_to.emit("prospect_transcript", t.text.clone());
+                    tail.push(' ');
+                    tail.push_str(&t.text);
+                    let words: Vec<&str> = tail.split_whitespace().collect();
+                    if words.len() > 30 {
+                        tail = words[words.len() - 30..].join(" ");
+                    }
+                    if let Some(index) = objection_detect::classify(&tail) {
+                        if recent.should_emit(index) {
+                            println!("PROSPECT_OBJECTION index={index} tail=\"{tail}\"");
+                            let _ = emit_to.emit("objection", index);
+                        }
+                    }
+                }
+                stt::SttEvent::Error(err) => eprintln!("PROSPECT_STT_ERROR {err}"),
+                stt::SttEvent::Connected => println!("PROSPECT_STT_READY"),
+            }
+        }
+        println!("PROSPECT_PIPELINE_ENDED");
+    });
+}
 
 /// Start the prospect stream: system audio → a second, isolated Apple STT session → keyword
 /// classifier → the existing `objection` event, so the battlecard appears on its own.
@@ -843,38 +966,8 @@ fn start_prospect_audio(app: tauri::AppHandle) -> Result<String, String> {
                 }
             };
 
-            let (event_tx, mut event_rx) = mpsc::unbounded_channel::<stt::SttEvent>();
             let stop = Arc::new(AtomicBool::new(false));
-            tauri::async_runtime::spawn(apple_stt::run(rx, event_tx, stop));
-
-            let emit_to = app.clone();
-            tauri::async_runtime::spawn(async move {
-                let mut recent = objection_detect::Recent::new();
-                let mut tail = String::new();
-                while let Some(event) = event_rx.recv().await {
-                    match event {
-                        stt::SttEvent::Transcript(t) => {
-                            let _ = emit_to.emit("prospect_transcript", t.text.clone());
-                            tail.push(' ');
-                            tail.push_str(&t.text);
-                            // Keep the last ~30 words so a phrase split across interims matches.
-                            let words: Vec<&str> = tail.split_whitespace().collect();
-                            if words.len() > 30 {
-                                tail = words[words.len() - 30..].join(" ");
-                            }
-                            if let Some(index) = objection_detect::classify(&tail) {
-                                if recent.should_emit(index) {
-                                    println!("PROSPECT_OBJECTION index={index} tail=\"{tail}\"");
-                                    let _ = emit_to.emit("objection", index);
-                                }
-                            }
-                        }
-                        stt::SttEvent::Error(err) => eprintln!("PROSPECT_STT_ERROR {err}"),
-                        stt::SttEvent::Connected => println!("PROSPECT_STT_READY"),
-                    }
-                }
-                println!("PROSPECT_LOOP_ENDED");
-            });
+            spawn_prospect_pipeline(&app, rx, stop);
         });
 
         Ok("starting prospect audio (macOS may ask for Speech and Screen Recording)".to_string())
@@ -941,6 +1034,13 @@ fn nudge(app: tauri::AppHandle, state: tauri::State<'_, AppState>, delta: i32) -
     let id = state.tracker.lock().unwrap().manual(delta);
     emit_active(&app, &state.tracker, id, "manual");
     id
+}
+
+#[tauri::command]
+fn jump_to_line(app: tauri::AppHandle, state: tauri::State<'_, AppState>, id: i32) -> i32 {
+    let new_id = state.tracker.lock().unwrap().jump_to(id);
+    emit_active(&app, &state.tracker, new_id, "manual-click");
+    new_id
 }
 
 #[tauri::command]
@@ -1272,6 +1372,7 @@ pub fn run() {
             key_status,
             tracker_snapshot,
             nudge,
+            jump_to_line,
             audio_level,
             script_lines,
             select_script,
@@ -1332,6 +1433,7 @@ pub fn run() {
                 stop: Mutex::new(None),
                 audio_tx: Mutex::new(None),
                 http: reqwest::Client::builder()
+                    .user_agent("stealthprompter/1.0")
                     .timeout(Duration::from_secs(5))
                     .build()
                     .expect("http client"),
@@ -1595,9 +1697,36 @@ pub fn run() {
                 eprintln!("HOTKEY_ERROR registration failed: {err}");
             }
 
+            bare_keys::attach(app.handle().clone());
+            if let Err(err) = bare_keys::start() {
+                println!("BARE_KEYS_INIT: {err}");
+            }
+
             // Loopback webhook so the local dialer (Pulse Dialer) can push the prospect's
             // name/company/niche when a call starts. Non-fatal if the port is unavailable.
             context_server::spawn(app.handle().clone());
+
+            // Loopback dialer intake on port 47831 (POST /lead)
+            {
+                let handle_lead = app.handle().clone();
+                let port = std::env::var("STEALTH_LEAD_PORT")
+                    .ok()
+                    .and_then(|v| v.parse::<u16>().ok())
+                    .unwrap_or(lead::DEFAULT_PORT);
+                let token = std::env::var("STEALTH_LEAD_TOKEN")
+                    .ok()
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty());
+                match lead::spawn(port, token, move |incoming| {
+                    if let Some(name) = incoming.name.filter(|n| !n.is_empty()) {
+                        let updated = context_server::update_prospect_name(name);
+                        let _ = handle_lead.emit("call_context", &updated);
+                    }
+                }) {
+                    Ok(bound) => println!("LEAD_READY http://127.0.0.1:{bound}/lead"),
+                    Err(err) => eprintln!("LEAD_LISTENER_ERROR {err} (dialer intake disabled)"),
+                }
+            }
 
             // Headless verification hook: start without a human clicking Start.
             if std::env::var("STEALTH_AUTOSTART").is_ok() {

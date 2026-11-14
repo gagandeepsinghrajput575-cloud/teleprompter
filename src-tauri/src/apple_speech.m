@@ -15,6 +15,7 @@
 @property (nonatomic, assign) void *userData;
 @property (nonatomic, assign) BOOL isStopping;
 @property (nonatomic, strong) dispatch_queue_t syncQueue;
+@property (nonatomic, copy) NSArray<NSString *> *contextualStrings;
 @end
 
 @implementation AppleSpeechSession
@@ -29,6 +30,7 @@
         _userData = userData;
         _isStopping = NO;
         _latestTranscript = @"";
+        _contextualStrings = @[];
         _syncQueue = dispatch_queue_create("com.stealthprompter.apple_speech", DISPATCH_QUEUE_SERIAL);
         
         NSLocale *locale = [NSLocale localeWithLocaleIdentifier:@"en-US"];
@@ -57,6 +59,10 @@
     
     SFSpeechAudioBufferRecognitionRequest *request = [[SFSpeechAudioBufferRecognitionRequest alloc] init];
     request.shouldReportPartialResults = YES;
+    request.taskHint = SFSpeechRecognitionTaskHintDictation;
+    if (self.contextualStrings.count > 0) {
+        request.contextualStrings = self.contextualStrings;
+    }
     if (self.recognizer.supportsOnDeviceRecognition) {
         request.requiresOnDeviceRecognition = YES;
     }
@@ -173,12 +179,21 @@ int apple_speech_request_permission(double timeout_seconds) {
             return current;
         }
         
+        if ([NSThread isMainThread]) {
+            [SFSpeechRecognizer requestAuthorization:^(SFSpeechRecognizerAuthorizationStatus status) {
+                (void)status;
+            }];
+            return apple_speech_permission_status();
+        }
+        
         dispatch_semaphore_t sem = dispatch_semaphore_create(0);
         
-        [SFSpeechRecognizer requestAuthorization:^(SFSpeechRecognizerAuthorizationStatus status) {
-            (void)status;
-            dispatch_semaphore_signal(sem);
-        }];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [SFSpeechRecognizer requestAuthorization:^(SFSpeechRecognizerAuthorizationStatus status) {
+                (void)status;
+                dispatch_semaphore_signal(sem);
+            }];
+        });
         
         int64_t timeout_ns = (int64_t)(timeout_seconds * NSEC_PER_SEC);
         dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, timeout_ns));
@@ -214,6 +229,28 @@ void apple_speech_rotate_request(AppleSpeechSessionRef session_ref) {
     @autoreleasepool {
         AppleSpeechSession *session = (__bridge AppleSpeechSession *)session_ref;
         [session rotateRequest];
+    }
+}
+
+void apple_speech_set_contextual_strings(AppleSpeechSessionRef session_ref, const char **strings, size_t count) {
+    if (!session_ref || !strings || count == 0) return;
+    @autoreleasepool {
+        AppleSpeechSession *session = (__bridge AppleSpeechSession *)session_ref;
+        NSMutableArray<NSString *> *arr = [NSMutableArray arrayWithCapacity:count];
+        for (size_t i = 0; i < count; i++) {
+            if (strings[i]) {
+                NSString *str = [NSString stringWithUTF8String:strings[i]];
+                if (str.length > 0) {
+                    [arr addObject:str];
+                }
+            }
+        }
+        dispatch_sync(session.syncQueue, ^{
+            session.contextualStrings = [arr copy];
+            if (session.currentRequest) {
+                session.currentRequest.contextualStrings = session.contextualStrings;
+            }
+        });
     }
 }
 

@@ -15,8 +15,8 @@
       {
         "label": "hud",
         "title": "StealthPrompter",
-        "width": 320,
-        "height": 300,
+        "width": 1080,
+        "height": 720,
         "minWidth": 260,
         "minHeight": 220,
         "resizable": true,
@@ -50,6 +50,7 @@
     "macOS": {
       "signingIdentity": "-",
       "entitlements": "Entitlements.plist",
+      "infoPlist": "Info.plist",
       "minimumSystemVersion": "11.0"
     }
   }

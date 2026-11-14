@@ -44,20 +44,57 @@ pub fn list_input_devices() -> Result<Vec<String>, String> {
 
 fn pick_device(preferred: Option<&str>) -> Result<cpal::Device, String> {
     let host = cpal::default_host();
-    if let Some(wanted) = preferred {
-        if let Ok(devices) = host.input_devices() {
-            for device in devices {
-                let matches = device
-                    .description()
-                    .map(|desc| desc.name() == wanted)
-                    .unwrap_or(false);
-                if matches {
-                    return Ok(device);
+    let devices: Vec<cpal::Device> = host
+        .input_devices()
+        .map(|iter| iter.collect())
+        .unwrap_or_default();
+
+    let trimmed = preferred.map(|s| s.trim()).filter(|s| !s.is_empty());
+
+    // 1. If preferred device specified, try exact match first
+    if let Some(wanted) = trimmed {
+        for device in &devices {
+            if let Ok(desc) = device.description() {
+                if desc.name() == wanted {
+                    return Ok(device.clone());
                 }
             }
         }
-        return Err(format!("input device '{wanted}' not found"));
+        // Substring / case-insensitive match for preferred
+        for device in &devices {
+            if let Ok(desc) = device.description() {
+                let name = desc.name();
+                if name.eq_ignore_ascii_case(wanted)
+                    || name.to_lowercase().contains(&wanted.to_lowercase())
+                {
+                    return Ok(device.clone());
+                }
+            }
+        }
     }
+
+    // 2. Actively prioritize CrystalSound microphone if present (AI voice filters clear background noise)
+    for device in &devices {
+        if let Ok(desc) = device.description() {
+            let name = desc.name();
+            if name.to_lowercase().contains("crystal") {
+                println!(
+                    "AUDIO_DEVICE: Prioritizing CrystalSound microphone: '{}' (AI voice filter active)",
+                    name
+                );
+                return Ok(device.clone());
+            }
+        }
+    }
+
+    // 3. Fall back to host default input device
+    if let Some(wanted) = trimmed {
+        eprintln!(
+            "AUDIO_DEVICE: Preferred device '{}' not found, falling back to default",
+            wanted
+        );
+    }
+
     host.default_input_device()
         .ok_or_else(|| "no default input device".to_string())
 }
@@ -341,6 +378,31 @@ mod tests {
     /// Regression: the replay thread used to ignore the stop flag, so the sender was
     /// never dropped, the audio channel never closed, and the Deepgram socket stayed open
     /// (and billable) long after the user pressed Stop.
+    use cpal::traits::{DeviceTrait, HostTrait};
+
+    #[test]
+    fn pick_device_prefers_crystalsound_when_present() {
+        let host = cpal::default_host();
+        let devices: Vec<cpal::Device> = host
+            .input_devices()
+            .map(|iter| iter.collect())
+            .unwrap_or_default();
+        let has_crystal = devices.iter().any(|d| {
+            d.description()
+                .map(|desc| desc.name().to_lowercase().contains("crystal"))
+                .unwrap_or(false)
+        });
+
+        if has_crystal {
+            let dev = super::pick_device(None).expect("should find device");
+            let name = dev.description().unwrap().name().to_string();
+            assert!(
+                name.to_lowercase().contains("crystal"),
+                "Expected CrystalSound to be chosen, got: {name}"
+            );
+        }
+    }
+
     #[test]
     fn replay_releases_the_channel_when_stopped() {
         let path = std::env::temp_dir().join("tp_replay_stop_test.wav");

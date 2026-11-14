@@ -184,8 +184,26 @@ void tp_system_audio_start(tp_audio_cb on_audio, tp_status_cb on_status) {
                     return;
                 }
 
+                // Exclude music/entertainment apps (Safari for YouTube techno, Spotify, Apple Music)
+                // so the prospect's voice from Chrome/Google Meet/Zoom is pristine and music never bleeds into STT.
+                NSMutableArray<SCRunningApplication *> *excludedApps = [NSMutableArray array];
+                for (SCRunningApplication *app in content.applications) {
+                    NSString *bundleId = app.bundleIdentifier.lowercaseString ?: @"";
+                    NSString *appName = app.applicationName.lowercaseString ?: @"";
+                    if ([bundleId containsString:@"safari"] ||
+                        [bundleId containsString:@"spotify"] ||
+                        [bundleId containsString:@"apple.music"] ||
+                        [appName containsString:@"spotify"] ||
+                        [appName containsString:@"music"]) {
+                        [excludedApps addObject:app];
+                        NSLog(@"[system-audio] Excluded music app: %@ (%@)", app.applicationName, app.bundleIdentifier);
+                    }
+                }
+
                 SCContentFilter *filter =
-                    [[SCContentFilter alloc] initWithDisplay:display excludingWindows:@[]];
+                    [[SCContentFilter alloc] initWithDisplay:display
+                                       excludingApplications:excludedApps
+                                            exceptingWindows:@[]];
 
                 SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
                 config.capturesAudio = YES;

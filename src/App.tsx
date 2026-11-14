@@ -3,11 +3,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
 import { cueChips } from "./lib/cues";
-import { objectionFor, type Objection } from "./lib/objections";
-import { loadScript, type Script } from "./lib/script";
+import { OBJECTIONS, objectionFor, type Objection } from "./lib/objections";
+import { loadScript, parseAnnotations, type Script } from "./lib/script";
 import call1Fixture from "./fixtures/call1_audit_script.json";
 import call2Fixture from "./fixtures/call2_sales_script.json";
 import coldcallFixture from "./fixtures/coldcall_scalix.json";
+import ColdCallFlowchart from "./ColdCallFlowchart";
+import { FLOW } from "./lib/coldcall";
 
 const call1Script = loadScript(call1Fixture as never);
 const call2Script = loadScript(call2Fixture as never);
@@ -67,9 +69,22 @@ function ProspectEcho() {
 }
 
 export default function App() {
-  const [selectedCall, setSelectedCall] = useState<"call1" | "call2" | "coldcall" | null>(null);
-  const [script, setScript] = useState<Script>(call1Script);
-  const [activeId, setActiveId] = useState(call1Script.lines[0]?.id ?? 1);
+  const [selectedCall, setSelectedCall] = useState<"call1" | "call2" | "coldcall" | null>(() => {
+    const saved = localStorage.getItem("tp.selectedCall");
+    return (saved as "call1" | "call2" | "coldcall") || "coldcall";
+  });
+  const [script, setScript] = useState<Script>(() => {
+    const saved = localStorage.getItem("tp.selectedCall");
+    if (saved === "call1") return call1Script;
+    if (saved === "call2") return call2Script;
+    return coldCallScript;
+  });
+  const [activeId, setActiveId] = useState(() => {
+    const saved = localStorage.getItem("tp.selectedCall");
+    if (saved === "call1") return call1Script.lines[0]?.id ?? 1;
+    if (saved === "call2") return call2Script.lines[0]?.id ?? 1;
+    return coldCallScript.lines[0]?.id ?? 1;
+  });
   const [reason, setReason] = useState("start");
   const [status, setStatus] = useState<StatusEvent>({ running: false, message: "idle" });
   const [error, setError] = useState<string | null>(null);
@@ -92,8 +107,11 @@ export default function App() {
   // Selects the prospect's audio (the dialer call) and the note the backend reports for it.
   const [prospectAudio, setProspectAudio] = useState(false);
   const [prospectNote, setProspectNote] = useState("");
-  // Bare 1-9/0 battlecard keys (Accessibility tap; only active while listening).
-  const [bareKeys, setBareKeys] = useState(false);
+  // Bare 1-9/0 battlecard keys (Accessibility tap; defaults to ON).
+  const [bareKeys, setBareKeys] = useState(() => {
+    const saved = localStorage.getItem("tp.bareKeys");
+    return saved !== null ? saved === "true" : true;
+  });
   const [bareNote, setBareNote] = useState("");
   const [prospect, setProspect] = useState<{ name: string; company: string; niche: string }>(() => {
     try {
@@ -138,10 +156,31 @@ export default function App() {
     };
   }, []);
 
-  // Reflect the tap state in case it was armed before this view mounted.
+  // Reflect or auto-arm the bare keys tap on mount.
   useEffect(() => {
     invoke<boolean>("bare_keys_armed")
-      .then(setBareKeys)
+      .then((armed) => {
+        if (armed) {
+          setBareKeys(true);
+          setBareNote("bare 1-0 active");
+        } else {
+          invoke("bare_keys_start")
+            .then(() => {
+              setBareKeys(true);
+              setBareNote("bare 1-0 active");
+              localStorage.setItem("tp.bareKeys", "true");
+            })
+            .catch((err) => {
+              const saved = localStorage.getItem("tp.bareKeys");
+              if (saved === "false") {
+                setBareKeys(false);
+                setBareNote("bare 1-0 off");
+              } else {
+                setBareNote(String(err));
+              }
+            });
+        }
+      })
       .catch(() => undefined);
   }, []);
 
@@ -156,6 +195,7 @@ export default function App() {
         const chosen =
           p.script === "call2" ? call2Script : p.script === "coldcall" ? coldCallScript : call1Script;
         setSelectedCall(p.script);
+        localStorage.setItem("tp.selectedCall", p.script);
         setScript(chosen);
         setActiveId(chosen.lines[0]?.id ?? 1);
         invoke("select_script", { callType: p.script }).catch(() => undefined);
@@ -231,8 +271,14 @@ export default function App() {
         "start_session",
         { device, engine }
       );
-      setStatus({ running: true, message: `listening on ${info.device.device}` });
-      if (!info.jev) setError("Jev key missing: stage 2 disabled");
+      if (info.engine && info.engine !== engine) {
+        setEngine(info.engine as "apple" | "deepgram");
+      }
+      const isCs = /crystal/i.test(info.device.device);
+      setStatus({
+        running: true,
+        message: isCs ? `✨ ${info.device.device} (AI Filtered)` : `listening on ${info.device.device}`,
+      });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -243,6 +289,7 @@ export default function App() {
   const selectCall = useCallback(
     async (type: "call1" | "call2" | "coldcall", chosenDevice?: string | null) => {
       setSelectedCall(type);
+      localStorage.setItem("tp.selectedCall", type);
       const chosen =
         type === "call1" ? call1Script : type === "call2" ? call2Script : coldCallScript;
       setScript(chosen);
@@ -260,8 +307,17 @@ export default function App() {
           "start_session",
           { device: targetDevice, engine }
         );
-        setStatus({ running: true, message: `listening on ${info.device.device}` });
-        if (!info.jev) setError("Jev key missing: stage 2 disabled");
+        if (info.engine && info.engine !== engine) {
+          setEngine(info.engine as "apple" | "deepgram");
+        }
+        const isCs = /crystal/i.test(info.device.device);
+        setStatus({
+          running: true,
+          message: isCs ? `✨ ${info.device.device} (AI Filtered)` : `listening on ${info.device.device}`,
+        });
+        if (type === "call1" || type === "call2") {
+          invoke<string>("system_audio_start").catch(() => undefined);
+        }
       } catch (e) {
         setError(String(e));
       } finally {
@@ -282,7 +338,11 @@ export default function App() {
           "start_session",
           { device, engine: next }
         );
-        setStatus({ running: true, message: `listening on ${info.device.device}` });
+        const isCs = /crystal/i.test(info.device.device);
+        setStatus({
+          running: true,
+          message: isCs ? `✨ ${info.device.device} (AI Filtered)` : `listening on ${info.device.device}`,
+        });
       } catch (e) {
         setError(String(e));
       } finally {
@@ -290,6 +350,15 @@ export default function App() {
       }
     }
   }, [engine, status.running, chooseEngine, device]);
+
+  // Synchronize initial script selection with the backend and auto-start listening
+  useEffect(() => {
+    invoke("select_script", { callType: selectedCall }).catch(() => undefined);
+    const timer = setTimeout(() => {
+      start();
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [selectedCall, start]);
 
   // Toggle the prospect (system-audio) tap. Fully additive: the mic session keeps running either
   // way, and a permission refusal is reported back without breaking anything.
@@ -314,34 +383,36 @@ export default function App() {
     if (bareKeys) {
       await invoke("bare_keys_stop").catch(() => undefined);
       setBareKeys(false);
+      localStorage.setItem("tp.bareKeys", "false");
       setBareNote("bare 1-0 off");
       return;
     }
     try {
       await invoke("bare_keys_start");
       setBareKeys(true);
-      setBareNote("bare 1-0 on — active while listening");
+      localStorage.setItem("tp.bareKeys", "true");
+      setBareNote("bare 1-0 active");
     } catch (e) {
       setBareNote(String(e));
     }
   }, [bareKeys]);
 
-  // Input devices list.
+  // Input devices list: actively prioritizes CrystalSound for AI voice isolation
   useEffect(() => {
     invoke<string[]>("list_devices")
       .then((list) => {
         setDevices(list);
         const saved = localStorage.getItem("tp.device");
-        if (saved && list.includes(saved)) {
+        const cs = list.find((d) => /crystal/i.test(d));
+        if (saved && /crystal/i.test(saved) && list.includes(saved)) {
           setDevice(saved);
-        } else {
-          const cs = list.find((d) => /crystal/i.test(d));
-          if (cs) {
-            setDevice(cs);
-            localStorage.setItem("tp.device", cs);
-          } else if (list.length > 0) {
-            setDevice(list[0]);
-          }
+        } else if (cs) {
+          setDevice(cs);
+          localStorage.setItem("tp.device", cs);
+        } else if (saved && list.includes(saved)) {
+          setDevice(saved);
+        } else if (list.length > 0) {
+          setDevice(list[0]);
         }
       })
       .catch(() => undefined);
@@ -362,17 +433,24 @@ export default function App() {
     }
   }, []);
 
-  // Manual nudge shortcuts.
+  // Manual shortcuts & in-window objection triggers (1-9, 0).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setObjection(null);
         return;
       }
-      // Ignore arrows while typing in a field, and ignore modified keys so the global
-      // ⌘⇧⌥ section/line hotkeys don't also trigger the local nudge.
+      // Ignore keys while typing in text input fields
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+
+      // Digits 1-9, 0 trigger objection battlecards (both bare and Ctrl+digit)
+      if (/^[0-9]$/.test(e.key) && !e.metaKey && !e.altKey && !e.shiftKey) {
+        const idx = parseInt(e.key, 10);
+        setObjection((prev) => (prev?.index === idx ? null : objectionFor(idx) ?? null));
+        return;
+      }
+
       if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
       if (e.key === "ArrowDown")
         invoke("nudge", { delta: 1 })
@@ -584,7 +662,7 @@ export default function App() {
           </button>
 
           <div className="mic-selection-box">
-            <span className="mic-selection-label">🎙️ Microphone Input:</span>
+            <span className="mic-selection-label">🎙️ Microphone Input (Voice Filtered):</span>
             <select
               className="picker"
               value={device ?? ""}
@@ -593,7 +671,7 @@ export default function App() {
             >
               {devices.map((name) => (
                 <option key={name} value={name}>
-                  {name}
+                  {/crystal/i.test(name) ? `✨ ${name} (AI Noise Filter)` : name}
                 </option>
               ))}
             </select>
@@ -627,8 +705,16 @@ export default function App() {
             <span className="status">{status.message}</span>
             <button
               className="call-pill"
-              onClick={() => setSelectedCall(null)}
-              title="Click to switch call"
+              onClick={() => {
+                const next =
+                  selectedCall === "coldcall"
+                    ? "call1"
+                    : selectedCall === "call1"
+                      ? "call2"
+                      : "coldcall";
+                selectCall(next);
+              }}
+              title="Click to cycle script (Cold Call ➔ Audit ➔ Close)"
             >
               {selectedCall === "call1"
                 ? "🔍 Audit (Call 1) ▾"
@@ -715,35 +801,79 @@ export default function App() {
             )}
           </div>
 
-          <div className="blocks" ref={blocksRef}>
-            {script.lines.map((line, i) => {
-              const state = line.id === activeId ? "active" : i < activeIndex ? "past" : "future";
-              const showPhase = i === 0 || script.lines[i - 1].phase !== line.phase;
-              return (
-                <Fragment key={line.id}>
-                  {showPhase && <div className="phase">{line.phase}</div>}
-                  <div
-                    className="line"
-                    data-state={state}
-                    ref={line.id === activeId ? activeRef : undefined}
-                  >
-                    <span className="label">{line.label}</span>
-                    {spokenLine(line.body)}
-                    {state === "active" && (
-                      <div className="cues">
-                        {cueChips(line.cue).map((chip) => (
-                          <span className="cue" key={chip}>
-                            {chip}
-                          </span>
-                        ))}
-                        <span className="cue reason">{reason}</span>
-                      </div>
-                    )}
-                  </div>
-                </Fragment>
-              );
-            })}
+          <div className="objection-chips-row">
+            {OBJECTIONS.map((obj) => (
+              <button
+                key={obj.index}
+                type="button"
+                className={`objection-chip ${objection?.index === obj.index ? "active" : ""}`}
+                onClick={() => setObjection((prev) => (prev?.index === obj.index ? null : obj))}
+                title={`Press ${obj.index} or ⌃${obj.index}: ${obj.label}`}
+              >
+                <span className="chip-key">{obj.index}</span>
+                <span className="chip-label">{obj.label.split("/")[0].trim()}</span>
+              </button>
+            ))}
           </div>
+
+          {selectedCall === "coldcall" ? (
+            <ColdCallFlowchart
+              flow={FLOW}
+              activeId={activeId}
+              onJump={(id: number) => {
+                setActiveId(id);
+                invoke("jump_to_line", { id }).catch(() => undefined);
+              }}
+              name={prospect?.name}
+            />
+          ) : (
+            <div className="blocks" ref={blocksRef}>
+              {script.lines.map((line, i) => {
+                const state = line.id === activeId ? "active" : i < activeIndex ? "past" : "future";
+                const showPhase = i === 0 || script.lines[i - 1].phase !== line.phase;
+                return (
+                  <Fragment key={line.id}>
+                    {showPhase && <div className="phase">{line.phase}</div>}
+                    <div
+                      className="line"
+                      data-state={state}
+                      ref={line.id === activeId ? activeRef : undefined}
+                    >
+                      <div className="line-core">
+                        <span className="label">{line.label}</span>
+                        <span className="line-text">{spokenLine(line.body)}</span>
+                        {state === "active" && (
+                          <div className="cues">
+                            {cueChips(line.cue).map((chip) => (
+                              <span className="cue" key={chip}>
+                                {chip}
+                              </span>
+                            ))}
+                            <span className="cue reason">{reason}</span>
+                          </div>
+                        )}
+                      </div>
+                      {line.branches && line.branches.length > 0 && (
+                        <div className="tree-branches">
+                          {line.branches.map((b, bIdx) => (
+                            <div className="tree-branch-node" key={bIdx}>
+                              <div className="branch-cond">
+                                <span className="branch-elbow">↳</span>
+                                <span className="branch-cond-label">{b.condition}</span>
+                              </div>
+                              <div className="branch-reply">
+                                {spokenLine(parseAnnotations(b.response).body)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </Fragment>
+                );
+              })}
+            </div>
+          )}
 
           <div className="footer">
             <SpokenText />

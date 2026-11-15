@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fillName } from "./lib/placeholders";
 import {
   appointmentDays,
@@ -6,6 +6,21 @@ import {
   type ColdCallFlow,
   type FlowCard,
 } from "./lib/coldcall";
+
+export type SlotPosition = "top" | "right" | "bottom" | "left";
+
+export type FlowEdge = {
+  id: string;
+  fromId: number;
+  fromSlot: SlotPosition;
+  toId: number;
+  toSlot: SlotPosition;
+};
+
+export type NodePosition = {
+  x: number;
+  y: number;
+};
 
 type Props = {
   flow: ColdCallFlow;
@@ -17,17 +32,98 @@ type Props = {
   now?: Date;
 };
 
-/**
- * Three-column live call flowchart.
- *
- * `1fr 380px 1fr`: objection cards on the left, the centre path fixed at 380px in the middle,
- * objection cards on the right. The centre column is the gold line — the only place the
- * highlight ever lives — so the rep's eye has one fixed home and never has to find it.
- *
- * Scrolling is bidirectional on purpose. A call does not only move forward: a bounced
- * objection sends the rep back up the flow. Every column therefore scrolls its own active card
- * to centre with `block: "center"` and `behavior: "smooth"`, in whichever direction that is.
- */
+// Default layout generator
+function buildDefaultPositions(allCards: FlowCard[]): Record<number, NodePosition> {
+  const positions: Record<number, NodePosition> = {};
+  const leftX = 60;
+  const centerX = 500;
+  const rightX = 940;
+
+  // Center spine turns 1 to 7
+  const spineY: Record<number, number> = {
+    1: 40,
+    2: 300,
+    3: 580,
+    4: 900,
+    5: 1240,
+    6: 1500,
+    7: 1740,
+  };
+
+  // Branch positioning
+  const branchMap: Record<number, { x: number; y: number }> = {
+    // Row 1
+    101: { x: leftX, y: 40 },
+    102: { x: rightX, y: 40 },
+    103: { x: rightX, y: 170 },
+    // Row 2
+    112: { x: leftX, y: 300 },
+    113: { x: rightX, y: 300 },
+    // Row 3
+    104: { x: leftX, y: 580 },
+    105: { x: leftX, y: 730 },
+    106: { x: rightX, y: 580 },
+    // Row 4
+    107: { x: leftX, y: 900 },
+    108: { x: leftX, y: 1060 },
+    109: { x: leftX, y: 1220 },
+    110: { x: leftX, y: 1380 },
+    111: { x: rightX, y: 900 },
+    114: { x: rightX, y: 1060 },
+  };
+
+  for (const card of allCards) {
+    if (card.id in spineY) {
+      positions[card.id] = { x: centerX, y: spineY[card.id] };
+    } else if (card.id in branchMap) {
+      positions[card.id] = branchMap[card.id];
+    } else {
+      // Custom card fallback
+      const idx = allCards.indexOf(card);
+      positions[card.id] = {
+        x: card.side === "left" ? leftX : card.side === "right" ? rightX : centerX,
+        y: 100 + idx * 160,
+      };
+    }
+  }
+
+  return positions;
+}
+
+function buildDefaultEdges(): FlowEdge[] {
+  return [
+    // Spine flow
+    { id: "e1-2", fromId: 1, fromSlot: "bottom", toId: 2, toSlot: "top" },
+    { id: "e2-3", fromId: 2, fromSlot: "bottom", toId: 3, toSlot: "top" },
+    { id: "e3-4", fromId: 3, fromSlot: "bottom", toId: 4, toSlot: "top" },
+    { id: "e4-5", fromId: 4, fromSlot: "bottom", toId: 5, toSlot: "top" },
+    { id: "e5-6", fromId: 5, fromSlot: "bottom", toId: 6, toSlot: "top" },
+    { id: "e6-7", fromId: 6, fromSlot: "bottom", toId: 7, toSlot: "top" },
+
+    // Row 1 connections
+    { id: "e101-1", fromId: 101, fromSlot: "right", toId: 1, toSlot: "left" },
+    { id: "e102-1", fromId: 102, fromSlot: "left", toId: 1, toSlot: "right" },
+    { id: "e103-1", fromId: 103, fromSlot: "left", toId: 1, toSlot: "right" },
+
+    // Row 2 connections
+    { id: "e112-2", fromId: 112, fromSlot: "right", toId: 2, toSlot: "left" },
+    { id: "e113-2", fromId: 113, fromSlot: "left", toId: 2, toSlot: "right" },
+
+    // Row 3 connections
+    { id: "e104-3", fromId: 104, fromSlot: "right", toId: 3, toSlot: "left" },
+    { id: "e105-3", fromId: 105, fromSlot: "right", toId: 3, toSlot: "left" },
+    { id: "e106-3", fromId: 106, fromSlot: "left", toId: 3, toSlot: "right" },
+
+    // Row 4 connections
+    { id: "e107-4", fromId: 107, fromSlot: "right", toId: 4, toSlot: "left" },
+    { id: "e108-109", fromId: 108, fromSlot: "bottom", toId: 109, toSlot: "top" },
+    { id: "e109-4", fromId: 109, fromSlot: "right", toId: 4, toSlot: "left" },
+    { id: "e110-4", fromId: 110, fromSlot: "right", toId: 4, toSlot: "left" },
+    { id: "e111-4", fromId: 111, fromSlot: "left", toId: 4, toSlot: "right" },
+    { id: "e114-4", fromId: 114, fromSlot: "left", toId: 4, toSlot: "right" },
+  ];
+}
+
 export default function ColdCallFlowchart({
   flow,
   activeId,
@@ -37,45 +133,429 @@ export default function ColdCallFlowchart({
 }: Props) {
   const days = appointmentDays(now);
   const cardRefs = useRef(new Map<number, HTMLDivElement>());
+  const canvasRef = useRef<HTMLDivElement>(null);
 
-  // Centre the active card in its own column. `scrollIntoView` walks up to the nearest
-  // scrollable ancestor, so the three columns stay independent.
-  useEffect(() => {
-    const element = cardRefs.current.get(activeId);
-    element?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
-  }, [activeId]);
+  // View mode: default to columns in SSR/tests, or loaded from localStorage in browser
+  const [viewMode, setViewMode] = useState<"canvas" | "columns">(() => {
+    if (typeof window === "undefined") return "columns";
+    return (localStorage.getItem("tp.flow.viewMode") as "canvas" | "columns") || "canvas";
+  });
 
-  const register = (id: number) => (node: HTMLDivElement | null) => {
-    if (node) cardRefs.current.set(id, node);
-    else cardRefs.current.delete(id);
+  // Custom cards created by the user with "+ New Block"
+  const [customCards, setCustomCards] = useState<FlowCard[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const saved = localStorage.getItem("tp.flow.customCards");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  // In-place edits to existing cards made via the ✏️ pencil button
+  const [editedCards, setEditedCards] = useState<Record<number, Partial<FlowCard>>>(() => {
+    if (typeof window === "undefined") return {};
+    try {
+      const saved = localStorage.getItem("tp.flow.editedCards");
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  // Merged cards list (original flow + user edits + custom cards)
+  const allCards = useMemo(() => {
+    const rawAll = [...flow.center, ...flow.branches, ...customCards];
+    return rawAll.map((card) => {
+      const edit = editedCards[card.id];
+      return edit ? { ...card, ...edit } : card;
+    });
+  }, [flow, customCards, editedCards]);
+
+  // Positions on canvas
+  const [positions, setPositions] = useState<Record<number, NodePosition>>(() => {
+    const defaults = buildDefaultPositions(allCards);
+    if (typeof window === "undefined") return defaults;
+    try {
+      const saved = localStorage.getItem("tp.flow.positions");
+      return saved ? { ...defaults, ...JSON.parse(saved) } : defaults;
+    } catch {
+      return defaults;
+    }
+  });
+
+  // Connections (edges) between block slots
+  const [edges, setEdges] = useState<FlowEdge[]>(() => {
+    const defaults = buildDefaultEdges();
+    if (typeof window === "undefined") return defaults;
+    try {
+      const saved = localStorage.getItem("tp.flow.edges");
+      return saved ? JSON.parse(saved) : defaults;
+    } catch {
+      return defaults;
+    }
+  });
+
+  // Node dimensions cache for accurate slot coordinate calculations
+  const [nodeDimensions, setNodeDimensions] = useState<Record<number, { w: number; h: number }>>({});
+
+  // Canvas zoom & pan
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 20, y: 20 });
+  const [isPanning, setIsPanning] = useState(false);
+  const panStartRef = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+
+  // Dragging a node
+  const [draggingNode, setDraggingNode] = useState<{
+    id: number;
+    startX: number;
+    startY: number;
+    nodeStartX: number;
+    nodeStartY: number;
+  } | null>(null);
+
+  // Connecting slots
+  const [connecting, setConnecting] = useState<{
+    fromId: number;
+    fromSlot: SlotPosition;
+    mouseX: number;
+    mouseY: number;
+  } | null>(null);
+
+  // Modal states: ✏️ Edit Card or ➕ New Block
+  const [editModalCard, setEditModalCard] = useState<FlowCard | null>(null);
+  const [isCreatingNew, setIsCreatingNew] = useState(false);
+
+  // Synchronize state changes to localStorage
+  const savePositions = useCallback((newPos: Record<number, NodePosition>) => {
+    setPositions(newPos);
+    try {
+      localStorage.setItem("tp.flow.positions", JSON.stringify(newPos));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const saveEdges = useCallback((newEdges: FlowEdge[]) => {
+    setEdges(newEdges);
+    try {
+      localStorage.setItem("tp.flow.edges", JSON.stringify(newEdges));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const saveCustomCards = useCallback((newCards: FlowCard[]) => {
+    setCustomCards(newCards);
+    try {
+      localStorage.setItem("tp.flow.customCards", JSON.stringify(newCards));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const saveEditedCards = useCallback((newEdits: Record<number, Partial<FlowCard>>) => {
+    setEditedCards(newEdits);
+    try {
+      localStorage.setItem("tp.flow.editedCards", JSON.stringify(newEdits));
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const toggleViewMode = (mode: "canvas" | "columns") => {
+    setViewMode(mode);
+    try {
+      localStorage.setItem("tp.flow.viewMode", mode);
+    } catch {
+      // ignore
+    }
   };
 
-  const renderCard = (card: FlowCard, variant: "center" | "branch") => {
+  // Measure card sizes on layout
+  const register = useCallback((id: number) => (node: HTMLDivElement | null) => {
+    if (node) {
+      cardRefs.current.set(id, node);
+      const rect = node.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setNodeDimensions((prev) => {
+          if (prev[id]?.w === rect.width && prev[id]?.h === rect.height) return prev;
+          return { ...prev, [id]: { w: rect.width, h: rect.height } };
+        });
+      }
+    } else {
+      cardRefs.current.delete(id);
+    }
+  }, []);
+
+  // Center the active card in column view
+  useEffect(() => {
+    if (viewMode === "columns") {
+      const element = cardRefs.current.get(activeId);
+      element?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    }
+  }, [activeId, viewMode]);
+
+  // Canvas Pan handlers
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    // Only pan if clicking canvas background directly
+    if (e.target === canvasRef.current || (e.target as HTMLElement)?.classList.contains("canvas-svg-layer")) {
+      setIsPanning(true);
+      panStartRef.current = {
+        x: e.clientX,
+        y: e.clientY,
+        panX: pan.x,
+        panY: pan.y,
+      };
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isPanning) {
+      const dx = e.clientX - panStartRef.current.x;
+      const dy = e.clientY - panStartRef.current.y;
+      setPan({ x: panStartRef.current.panX + dx, y: panStartRef.current.panY + dy });
+      return;
+    }
+
+    if (draggingNode) {
+      const dx = (e.clientX - draggingNode.startX) / zoom;
+      const dy = (e.clientY - draggingNode.startY) / zoom;
+      const newX = Math.round(draggingNode.nodeStartX + dx);
+      const newY = Math.round(draggingNode.nodeStartY + dy);
+      setPositions((prev) => ({
+        ...prev,
+        [draggingNode.id]: { x: newX, y: newY },
+      }));
+      return;
+    }
+
+    if (connecting && canvasRef.current) {
+      const rect = canvasRef.current.getBoundingClientRect();
+      const mouseX = (e.clientX - rect.left - pan.x) / zoom;
+      const mouseY = (e.clientY - rect.top - pan.y) / zoom;
+      setConnecting((prev) => (prev ? { ...prev, mouseX, mouseY } : null));
+    }
+  };
+
+  const handleMouseUp = () => {
+    if (isPanning) {
+      setIsPanning(false);
+    }
+    if (draggingNode) {
+      savePositions(positions);
+      setDraggingNode(null);
+    }
+    if (connecting) {
+      setConnecting(null);
+    }
+  };
+
+  // Node drag start
+  const startDragNode = (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const current = positions[id] || { x: 0, y: 0 };
+    setDraggingNode({
+      id,
+      startX: e.clientX,
+      startY: e.clientY,
+      nodeStartX: current.x,
+      nodeStartY: current.y,
+    });
+  };
+
+  // Slot connect start & finish
+  const startConnect = (nodeId: number, slot: SlotPosition, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!canvasRef.current) return;
+    const rect = canvasRef.current.getBoundingClientRect();
+    const mouseX = (e.clientX - rect.left - pan.x) / zoom;
+    const mouseY = (e.clientY - rect.top - pan.y) / zoom;
+    setConnecting({ fromId: nodeId, fromSlot: slot, mouseX, mouseY });
+  };
+
+  const finishConnect = (toId: number, toSlot: SlotPosition, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!connecting) return;
+    if (connecting.fromId === toId) {
+      setConnecting(null);
+      return;
+    }
+
+    const edgeId = `e-${connecting.fromId}-${connecting.fromSlot}-${toId}-${toSlot}`;
+    // Don't add duplicate edge
+    if (!edges.some((edge) => edge.id === edgeId)) {
+      const newEdge: FlowEdge = {
+        id: edgeId,
+        fromId: connecting.fromId,
+        fromSlot: connecting.fromSlot,
+        toId,
+        toSlot,
+      };
+      saveEdges([...edges, newEdge]);
+    }
+    setConnecting(null);
+  };
+
+  const deleteEdge = (edgeId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    saveEdges(edges.filter((edge) => edge.id !== edgeId));
+  };
+
+  // Calculate coordinates of a slot on canvas
+  const getSlotCoord = useCallback(
+    (nodeId: number, slot: SlotPosition) => {
+      const pos = positions[nodeId] || { x: 0, y: 0 };
+      const dims = nodeDimensions[nodeId] || { w: 360, h: 180 };
+      switch (slot) {
+        case "top":
+          return { x: pos.x + dims.w / 2, y: pos.y };
+        case "right":
+          return { x: pos.x + dims.w, y: pos.y + dims.h / 2 };
+        case "bottom":
+          return { x: pos.x + dims.w / 2, y: pos.y + dims.h };
+        case "left":
+          return { x: pos.x, y: pos.y + dims.h / 2 };
+      }
+    },
+    [positions, nodeDimensions]
+  );
+
+  // Compute smooth cubic bezier path between two slots
+  const computeBezierPath = (
+    p1: { x: number; y: number },
+    s1: SlotPosition,
+    p2: { x: number; y: number },
+    s2: SlotPosition
+  ) => {
+    const dx = Math.abs(p2.x - p1.x);
+    const dy = Math.abs(p2.y - p1.y);
+    const offset = Math.max(30, Math.min(140, Math.hypot(dx, dy) * 0.35));
+
+    let cp1x = p1.x;
+    let cp1y = p1.y;
+    let cp2x = p2.x;
+    let cp2y = p2.y;
+
+    if (s1 === "right") cp1x += offset;
+    else if (s1 === "left") cp1x -= offset;
+    else if (s1 === "bottom") cp1y += offset;
+    else if (s1 === "top") cp1y -= offset;
+
+    if (s2 === "right") cp2x += offset;
+    else if (s2 === "left") cp2x -= offset;
+    else if (s2 === "bottom") cp2y += offset;
+    else if (s2 === "top") cp2y -= offset;
+
+    const midX = (p1.x + p2.x) / 2;
+    const midY = (p1.y + p2.y) / 2;
+
+    return {
+      path: `M ${p1.x} ${p1.y} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`,
+      midX,
+      midY,
+    };
+  };
+
+  // Reset to auto-arranged layout
+  const resetLayout = () => {
+    const defaults = buildDefaultPositions(allCards);
+    savePositions(defaults);
+    saveEdges(buildDefaultEdges());
+    setPan({ x: 20, y: 20 });
+    setZoom(1);
+  };
+
+  // Delete a card
+  const deleteCard = (id: number) => {
+    saveCustomCards(customCards.filter((c) => c.id !== id));
+    const newEdits = { ...editedCards };
+    delete newEdits[id];
+    saveEditedCards(newEdits);
+    saveEdges(edges.filter((e) => e.fromId !== id && e.toId !== id));
+    setEditModalCard(null);
+  };
+
+  // Renders a card in either mode
+  const renderCardContent = (card: FlowCard, isCanvas: boolean) => {
     const active = card.id === activeId;
+    const pos = positions[card.id] || { x: 0, y: 0 };
+    const variant = card.side ? "branch" : "center";
+
     return (
       <div
         key={card.id}
         ref={register(card.id)}
-        className={`flow-card flow-card--${variant}`}
+        className={`flow-card flow-card--${variant} ${isCanvas ? "flow-card--canvas-node" : ""}`}
         data-active={active ? "true" : "false"}
+        style={isCanvas ? { transform: `translate3d(${pos.x}px, ${pos.y}px, 0)` } : undefined}
         role="button"
         tabIndex={0}
         aria-current={active ? "step" : undefined}
         onClick={() => onJump(card.id)}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
-            // Space scrolls the column by default, which fights the centred auto-scroll.
             event.preventDefault();
             onJump(card.id);
           }
         }}
       >
-        <div className="flow-card-head">
+        {/* 4 Connection Slots (Top, Right, Bottom, Left) */}
+        {isCanvas && (
+          <>
+            <div
+              className="slot-port slot-port--top"
+              onMouseDown={(e) => startConnect(card.id, "top", e)}
+              onMouseUp={(e) => finishConnect(card.id, "top", e)}
+              title="Slot: Top"
+            />
+            <div
+              className="slot-port slot-port--right"
+              onMouseDown={(e) => startConnect(card.id, "right", e)}
+              onMouseUp={(e) => finishConnect(card.id, "right", e)}
+              title="Slot: Right"
+            />
+            <div
+              className="slot-port slot-port--bottom"
+              onMouseDown={(e) => startConnect(card.id, "bottom", e)}
+              onMouseUp={(e) => finishConnect(card.id, "bottom", e)}
+              title="Slot: Bottom"
+            />
+            <div
+              className="slot-port slot-port--left"
+              onMouseDown={(e) => startConnect(card.id, "left", e)}
+              onMouseUp={(e) => finishConnect(card.id, "left", e)}
+              title="Slot: Left"
+            />
+          </>
+        )}
+
+        {/* Card Header with drag handle and ✏️ pencil button */}
+        <div
+          className="flow-card-head"
+          onMouseDown={isCanvas ? (e) => startDragNode(card.id, e) : undefined}
+          style={isCanvas ? { cursor: "grab" } : undefined}
+        >
           {card.turn && <span className="flow-turn">{card.turn}</span>}
           <span className="flow-label">{card.label}</span>
+
+          <div className="flow-card-actions">
+            {/* ✏️ Pencil Button to edit block */}
+            <button
+              type="button"
+              className="flow-btn-icon"
+              onClick={(e) => {
+                e.stopPropagation();
+                setEditModalCard(card);
+              }}
+              title="Edit block copy"
+            >
+              ✏️
+            </button>
+          </div>
         </div>
 
-        {variant === "branch" && card.trigger && (
+        {card.trigger && (
           <div className="flow-trigger">Prospect: “{fillName(card.trigger, name)}”</div>
         )}
 
@@ -100,7 +580,7 @@ export default function ColdCallFlowchart({
 
         {card.next != null && (
           <div className="flow-next">
-            {variant === "branch" ? "Return to" : "Then"} {turnName(flow, card.next)}
+            {card.side ? "Return to" : "Then"} {turnName(allCards, card.next)}
           </div>
         )}
       </div>
@@ -108,29 +588,402 @@ export default function ColdCallFlowchart({
   };
 
   return (
-    <div className="flow" data-active-id={activeId}>
-      <div className="flow-col flow-col--side" aria-label="Left objections">
-        {flow.branches
-          .filter((branch) => branch.side === "left")
-          .map((branch) => renderCard(branch, "branch"))}
+    <div className="flowchart-container" onMouseMove={handleMouseMove} onMouseUp={handleMouseUp}>
+      {/* Top Controls Toolbar */}
+      <div className="flow-toolbar">
+        <div className="flow-toolbar-left">
+          {/* + New Button to create new block */}
+          <button
+            type="button"
+            className="flow-btn flow-btn--primary"
+            onClick={() => setIsCreatingNew(true)}
+            title="Add a new script block or objection"
+          >
+            ➕ New Block
+          </button>
+
+          {/* 🔄 Reset Layout button */}
+          {viewMode === "canvas" && (
+            <button
+              type="button"
+              className="flow-btn"
+              onClick={resetLayout}
+              title="Auto-arrange blocks into default layout"
+            >
+              🔄 Auto-Arrange
+            </button>
+          )}
+        </div>
+
+        <div className="flow-toolbar-right">
+          {viewMode === "canvas" && (
+            <div className="flow-zoom-controls">
+              <button
+                type="button"
+                className="flow-btn-small"
+                onClick={() => setZoom((z) => Math.max(0.4, z - 0.1))}
+                title="Zoom Out"
+              >
+                −
+              </button>
+              <span className="flow-zoom-label">{Math.round(zoom * 100)}%</span>
+              <button
+                type="button"
+                className="flow-btn-small"
+                onClick={() => setZoom((z) => Math.min(1.8, z + 0.1))}
+                title="Zoom In"
+              >
+                +
+              </button>
+              <button
+                type="button"
+                className="flow-btn-small"
+                onClick={() => {
+                  setZoom(1);
+                  setPan({ x: 20, y: 20 });
+                }}
+                title="Reset View"
+              >
+                100%
+              </button>
+            </div>
+          )}
+
+          {/* View Mode Toggle: Canvas vs 3-Column */}
+          <div className="flow-mode-switch">
+            <button
+              type="button"
+              className={`flow-mode-btn ${viewMode === "canvas" ? "active" : ""}`}
+              onClick={() => toggleViewMode("canvas")}
+              title="Interactive draggable flowchart canvas with 4 connection slots"
+            >
+              🔀 Canvas
+            </button>
+            <button
+              type="button"
+              className={`flow-mode-btn ${viewMode === "columns" ? "active" : ""}`}
+              onClick={() => toggleViewMode("columns")}
+              title="Classic 3-column live reading view"
+            >
+              📋 Columns
+            </button>
+          </div>
+        </div>
       </div>
 
-      <div className="flow-col flow-col--center" aria-label="Centre path">
-        {flow.center.map((line) => renderCard(line, "center"))}
-      </div>
+      {/* VIEW MODE 1: Interactive Canvas */}
+      {viewMode === "canvas" ? (
+        <div
+          ref={canvasRef}
+          className="flow-canvas-viewport"
+          onMouseDown={handleCanvasMouseDown}
+          style={{ cursor: isPanning ? "grabbing" : "default" }}
+        >
+          <div
+            className="flow-canvas-content"
+            style={{
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              transformOrigin: "0 0",
+            }}
+          >
+            {/* SVG Layer for Dynamic Cable Connections */}
+            <svg className="flow-svg-layer">
+              <defs>
+                <marker
+                  id="flow-arrow"
+                  viewBox="0 0 10 10"
+                  refX="6"
+                  refY="5"
+                  markerWidth="6"
+                  markerHeight="6"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 1 L 9 5 L 0 9 z" fill="#c9a24b" />
+                </marker>
+                <marker
+                  id="flow-arrow-active"
+                  viewBox="0 0 10 10"
+                  refX="6"
+                  refY="5"
+                  markerWidth="7"
+                  markerHeight="7"
+                  orient="auto-start-reverse"
+                >
+                  <path d="M 0 1 L 9 5 L 0 9 z" fill="#ffd76a" />
+                </marker>
+              </defs>
 
-      <div className="flow-col flow-col--side" aria-label="Right objections">
-        {flow.branches
-          .filter((branch) => branch.side === "right")
-          .map((branch) => renderCard(branch, "branch"))}
-      </div>
+              {/* Render Existing Edges */}
+              {edges.map((edge) => {
+                const p1 = getSlotCoord(edge.fromId, edge.fromSlot);
+                const p2 = getSlotCoord(edge.toId, edge.toSlot);
+                const { path, midX, midY } = computeBezierPath(p1, edge.fromSlot, p2, edge.toSlot);
+                const isActive = edge.fromId === activeId || edge.toId === activeId;
+
+                return (
+                  <g key={edge.id} className="flow-edge-group">
+                    <path
+                      d={path}
+                      className={`flow-edge-path ${isActive ? "flow-edge-path--active" : ""}`}
+                      markerEnd={isActive ? "url(#flow-arrow-active)" : "url(#flow-arrow)"}
+                    />
+                    {/* Hover delete connection button */}
+                    <g
+                      className="flow-edge-delete"
+                      transform={`translate(${midX}, ${midY})`}
+                      onClick={(e) => deleteEdge(edge.id, e)}
+                    >
+                      <circle r="9" className="flow-edge-delete-circle" />
+                      <text dy="3.5" textAnchor="middle" className="flow-edge-delete-text">
+                        ×
+                      </text>
+                    </g>
+                  </g>
+                );
+              })}
+
+              {/* In-progress connecting line */}
+              {connecting && (
+                (() => {
+                  const p1 = getSlotCoord(connecting.fromId, connecting.fromSlot);
+                  const p2 = { x: connecting.mouseX, y: connecting.mouseY };
+                  const { path } = computeBezierPath(p1, connecting.fromSlot, p2, "left");
+                  return <path d={path} className="flow-edge-path flow-edge-path--draft" />;
+                })()
+              )}
+            </svg>
+
+            {/* Draggable Cards on Canvas */}
+            {allCards.map((card) => renderCardContent(card, true))}
+          </div>
+        </div>
+      ) : (
+        /* VIEW MODE 2: Classic 3-Column Scrollable Flow */
+        <div className="flow" data-active-id={activeId}>
+          <div className="flow-col flow-col--side" aria-label="Left objections">
+            {allCards
+              .filter((c) => c.side === "left")
+              .map((c) => renderCardContent(c, false))}
+          </div>
+
+          <div className="flow-col flow-col--center" aria-label="Centre path">
+            {allCards
+              .filter((c) => !c.side)
+              .map((c) => renderCardContent(c, false))}
+          </div>
+
+          <div className="flow-col flow-col--side" aria-label="Right objections">
+            {allCards
+              .filter((c) => c.side === "right")
+              .map((c) => renderCardContent(c, false))}
+          </div>
+        </div>
+      )}
+
+      {/* Modal: ✏️ Edit Block or ➕ New Block */}
+      {(editModalCard || isCreatingNew) && (
+        <CardEditorModal
+          initialCard={editModalCard}
+          isNew={isCreatingNew}
+          allCards={allCards}
+          onSave={(cardData) => {
+            if (isCreatingNew) {
+              const newId = Date.now();
+              const blockLabel = cardData.label?.trim() || "Untitled Block";
+              const newCard: FlowCard = {
+                id: newId,
+                side: cardData.side,
+                turn: cardData.turn,
+                label: blockLabel,
+                raw: cardData.beats.join(" "),
+                beats: cardData.beats,
+                anchors: [blockLabel.toLowerCase()],
+                objectionAnchors: cardData.side ? [blockLabel.toLowerCase()] : [],
+                trigger: cardData.trigger,
+                next: cardData.next ?? null,
+              };
+              saveCustomCards([...customCards, newCard]);
+              // Place new card near pan offset
+              const newPos = {
+                x: Math.round((-pan.x + 300) / zoom),
+                y: Math.round((-pan.y + 200) / zoom),
+              };
+              savePositions({ ...positions, [newId]: newPos });
+              setIsCreatingNew(false);
+            } else if (editModalCard) {
+              saveEditedCards({
+                ...editedCards,
+                [editModalCard.id]: cardData,
+              });
+              setEditModalCard(null);
+            }
+          }}
+          onDelete={editModalCard ? () => deleteCard(editModalCard.id) : undefined}
+          onClose={() => {
+            setEditModalCard(null);
+            setIsCreatingNew(false);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function turnName(flow: ColdCallFlow, id: number): string {
-  const card =
-    flow.center.find((line) => line.id === id) ?? flow.branches.find((branch) => branch.id === id);
+function turnName(cards: FlowCard[], id: number): string {
+  const card = cards.find((c) => c.id === id);
   if (!card) return `#${id}`;
   return card.turn ?? card.label;
+}
+
+// Modal component for creating or editing blocks
+type CardEditorProps = {
+  initialCard: FlowCard | null;
+  isNew: boolean;
+  allCards: FlowCard[];
+  onSave: (data: Partial<FlowCard> & { beats: string[] }) => void;
+  onDelete?: () => void;
+  onClose: () => void;
+};
+
+function CardEditorModal({ initialCard, isNew, allCards, onSave, onDelete, onClose }: CardEditorProps) {
+  const [label, setLabel] = useState(initialCard?.label ?? "");
+  const [turn, setTurn] = useState(initialCard?.turn ?? "");
+  const [side, setSide] = useState<"left" | "right" | undefined>(initialCard?.side);
+  const [trigger, setTrigger] = useState(initialCard?.trigger ?? "");
+  const [rawText, setRawText] = useState(initialCard?.beats.join("\n\n") ?? "");
+  const [nextId, setNextId] = useState<number | "">(initialCard?.next ?? "");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const beats = rawText
+      .split(/\n\n+/)
+      .map((b) => b.trim())
+      .filter(Boolean);
+
+    onSave({
+      label: label.trim() || "Untitled Block",
+      turn: turn.trim() || undefined,
+      side,
+      trigger: trigger.trim() || undefined,
+      beats: beats.length > 0 ? beats : [rawText],
+      next: nextId === "" ? null : Number(nextId),
+    });
+  };
+
+  return (
+    <div className="flow-modal-overlay" onClick={onClose}>
+      <div className="flow-modal" onClick={(e) => e.stopPropagation()}>
+        <div className="flow-modal-header">
+          <h3>{isNew ? "➕ Create New Script Block" : "✏️ Edit Script Block"}</h3>
+          <button type="button" className="flow-modal-close" onClick={onClose}>
+            ✕
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="flow-modal-form">
+          <div className="flow-form-row">
+            <label>Block Title / Label</label>
+            <input
+              type="text"
+              className="flow-input"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="e.g. Objection · Why is it free?"
+              required
+            />
+          </div>
+
+          <div className="flow-form-row flow-form-cols">
+            <div>
+              <label>Block Type / Placement</label>
+              <select
+                className="flow-select"
+                value={side ?? "center"}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setSide(val === "left" || val === "right" ? val : undefined);
+                }}
+              >
+                <option value="center">Center Path (Main Pitch Spine)</option>
+                <option value="left">Left Branch (Objection Card)</option>
+                <option value="right">Right Branch (Objection Card)</option>
+              </select>
+            </div>
+
+            <div>
+              <label>Turn Name (optional)</label>
+              <input
+                type="text"
+                className="flow-input"
+                value={turn}
+                onChange={(e) => setTurn(e.target.value)}
+                placeholder="e.g. Turn 4"
+              />
+            </div>
+          </div>
+
+          <div className="flow-form-row">
+            <label>Prospect Trigger / Objection (optional)</label>
+            <input
+              type="text"
+              className="flow-input"
+              value={trigger}
+              onChange={(e) => setTrigger(e.target.value)}
+              placeholder='e.g. "Just send me an email with some info"'
+            />
+          </div>
+
+          <div className="flow-form-row">
+            <label>Spoken Script (use emojis: 🐢, ⚡, ⬇️, ⏸️, 🤔, 🛑)</label>
+            <textarea
+              className="flow-textarea"
+              rows={6}
+              value={rawText}
+              onChange={(e) => setRawText(e.target.value)}
+              placeholder='🐢 For sure, I can email you ⬇️. ⏸️ ⚡ But the reason we do the 10-minute look first...'
+              required
+            />
+          </div>
+
+          <div className="flow-form-row">
+            <label>Next Step / Return To (optional)</label>
+            <select
+              className="flow-select"
+              value={nextId}
+              onChange={(e) => setNextId(e.target.value === "" ? "" : Number(e.target.value))}
+            >
+              <option value="">None / Final</option>
+              {allCards.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.turn ? `${c.turn}: ` : ""}{c.label} (#{c.id})
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="flow-modal-footer">
+            {onDelete && (
+              <button
+                type="button"
+                className="flow-btn flow-btn--danger"
+                onClick={() => {
+                  if (confirm("Delete this block?")) onDelete();
+                }}
+              >
+                🗑️ Delete
+              </button>
+            )}
+            <div className="flow-modal-actions-right">
+              <button type="button" className="flow-btn" onClick={onClose}>
+                Cancel
+              </button>
+              <button type="submit" className="flow-btn flow-btn--primary">
+                Save Changes
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
 }

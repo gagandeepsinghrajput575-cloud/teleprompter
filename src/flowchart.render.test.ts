@@ -45,4 +45,15 @@ describe("ColdCallFlowchart render", () => {
     expect(pathB).toBeLessThan(right);
     expect(right).toBeLessThan(pathD);
   });
+
+  it("renders toolbar with New Block button and view mode controls", () => {
+    expect(html).toContain("➕ New Block");
+    expect(html).toContain("🔀 Canvas");
+    expect(html).toContain("📋 Columns");
+  });
+
+  it("renders pencil edit buttons on blocks", () => {
+    expect(html).toContain("✏️");
+    expect(html).toContain("flow-btn-icon");
+  });
 });

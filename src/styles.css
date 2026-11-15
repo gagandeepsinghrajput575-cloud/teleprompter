@@ -1247,3 +1247,444 @@ body {
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.38);
 }
+
+/* ---------------------------------------------------------------------------
+   Interactive Draggable Flowchart Canvas & 4-Slot Connections
+   --------------------------------------------------------------------------- */
+.flowchart-container {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  background: #0d0d0f;
+}
+
+.flow-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  background: rgba(23, 23, 27, 0.95);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 25;
+}
+
+.flow-toolbar-left,
+.flow-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.flow-btn {
+  background: #1e1e24;
+  color: #f1ece2;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 6px;
+  padding: 5px 11px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 160ms ease;
+}
+
+.flow-btn:hover {
+  background: #282830;
+  border-color: #c9a24b;
+  color: #fff;
+}
+
+.flow-btn--primary {
+  background: #c9a24b;
+  color: #0d0d0f;
+  border-color: #c9a24b;
+  font-weight: 700;
+}
+
+.flow-btn--primary:hover {
+  background: #ffd76a;
+  border-color: #ffd76a;
+}
+
+.flow-btn--danger {
+  background: rgba(255, 77, 79, 0.12);
+  color: #ff7875;
+  border-color: rgba(255, 77, 79, 0.3);
+}
+
+.flow-btn--danger:hover {
+  background: #ff4d4f;
+  color: #fff;
+}
+
+.flow-btn-small {
+  background: #1e1e24;
+  color: #f1ece2;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.flow-btn-small:hover {
+  background: #2a2a34;
+  border-color: #c9a24b;
+}
+
+.flow-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 2px 4px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.flow-zoom-label {
+  font-size: 11px;
+  color: #a39d91;
+  min-width: 36px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.flow-mode-switch {
+  display: flex;
+  background: rgba(0, 0, 0, 0.4);
+  padding: 2px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.flow-mode-btn {
+  background: transparent;
+  color: #a39d91;
+  border: none;
+  padding: 4px 9px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+
+.flow-mode-btn.active {
+  background: #c9a24b;
+  color: #0d0d0f;
+  font-weight: 700;
+}
+
+/* Canvas Viewport */
+.flow-canvas-viewport {
+  flex: 1 1 auto;
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+  background-image: radial-gradient(rgba(201, 162, 75, 0.1) 1.2px, transparent 1.2px);
+  background-size: 24px 24px;
+}
+
+.flow-canvas-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3200px;
+  height: 3200px;
+  pointer-events: auto;
+}
+
+/* SVG Connection Cables Layer */
+.flow-svg-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.flow-edge-group {
+  pointer-events: stroke;
+}
+
+.flow-edge-path {
+  fill: none;
+  stroke: #c9a24b;
+  stroke-width: 2.2px;
+  stroke-linecap: round;
+  transition: stroke 160ms ease, stroke-width 160ms ease;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.flow-edge-path:hover {
+  stroke: #ffd76a;
+  stroke-width: 3.5px;
+}
+
+.flow-edge-path--active {
+  stroke: #ffd76a;
+  stroke-width: 3px;
+  filter: drop-shadow(0 0 5px rgba(255, 215, 106, 0.7));
+}
+
+.flow-edge-path--draft {
+  stroke: #ffd76a;
+  stroke-dasharray: 5 4;
+  animation: flow-draft-dash 0.6s linear infinite;
+}
+
+@keyframes flow-draft-dash {
+  to {
+    stroke-dashoffset: -9;
+  }
+}
+
+.flow-edge-delete {
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 0;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.flow-edge-group:hover .flow-edge-delete {
+  opacity: 1;
+}
+
+.flow-edge-delete-circle {
+  fill: #1f1113;
+  stroke: #ff4d4f;
+  stroke-width: 1.5px;
+  transition: all 140ms ease;
+}
+
+.flow-edge-delete:hover .flow-edge-delete-circle {
+  fill: #ff4d4f;
+}
+
+.flow-edge-delete-text {
+  fill: #ff4d4f;
+  font-size: 11px;
+  font-weight: 800;
+  user-select: none;
+}
+
+.flow-edge-delete:hover .flow-edge-delete-text {
+  fill: #fff;
+}
+
+/* Absolute Floating Canvas Node */
+.flow-card--canvas-node {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 350px;
+  box-sizing: border-box;
+  z-index: 2;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+.flow-card--canvas-node[data-active="true"] {
+  z-index: 10;
+}
+
+/* 4 Stickiness Connection Slots */
+.slot-port {
+  position: absolute;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: #17171b;
+  border: 2px solid #c9a24b;
+  cursor: crosshair;
+  z-index: 12;
+  transition: transform 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+
+.slot-port:hover {
+  transform: translate(-50%, -50%) scale(1.6) !important;
+  background: #ffd76a;
+  border-color: #fff;
+  box-shadow: 0 0 10px rgba(255, 215, 106, 0.9);
+}
+
+.slot-port--top {
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.slot-port--right {
+  top: 50%;
+  right: 0;
+  transform: translate(50%, -50%);
+}
+
+.slot-port--bottom {
+  bottom: 0;
+  left: 50%;
+  transform: translate(-50%, 50%);
+}
+
+.slot-port--left {
+  top: 50%;
+  left: 0;
+  transform: translate(-50%, -50%);
+}
+
+/* Card Header Action Icons (Pencil ✏️) */
+.flow-card-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.flow-btn-icon {
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  color: #f1ece2;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+  cursor: pointer;
+  line-height: 1;
+  transition: all 120ms ease;
+}
+
+.flow-btn-icon:hover {
+  background: #c9a24b;
+  color: #0d0d0f;
+}
+
+/* Edit / New Modal */
+.flow-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(4px);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.flow-modal {
+  background: #17171b;
+  border: 1px solid #c9a24b;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(201, 162, 75, 0.25);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 540px;
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.flow-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.flow-modal-header h3 {
+  margin: 0;
+  font-size: 14px;
+  color: #ffd76a;
+  letter-spacing: 0.04em;
+}
+
+.flow-modal-close {
+  background: transparent;
+  border: none;
+  color: #a39d91;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 4px 8px;
+}
+
+.flow-modal-close:hover {
+  color: #fff;
+}
+
+.flow-modal-form {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.flow-form-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.flow-form-row label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a39d91;
+}
+
+.flow-form-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.flow-input,
+.flow-select,
+.flow-textarea {
+  background: #1e1e24;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  color: #f1ece2;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 150ms ease;
+}
+
+.flow-input:focus,
+.flow-select:focus,
+.flow-textarea:focus {
+  border-color: #c9a24b;
+}
+
+.flow-textarea {
+  resize: vertical;
+  line-height: 1.45;
+}
+
+.flow-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.flow-modal-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}

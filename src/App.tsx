@@ -42,7 +42,9 @@ function LevelMeter() {
   useEffect(() => {
     const id = window.setInterval(() => {
       invoke<number>("audio_level")
-        .then(setLevel)
+        .then((lvl) => {
+          if (typeof lvl === "number") setLevel(lvl);
+        })
         .catch(() => undefined);
     }, 200);
     return () => window.clearInterval(id);
@@ -66,19 +68,37 @@ function ProspectEcho() {
   return <div className="prospect-echo">👂 {text || "listening to the call…"}</div>;
 }
 
+const getStorage = (key: string): string | null => {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+
+const setStorage = (key: string, value: string): void => {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // ignore
+  }
+};
+
 export default function App() {
   const [selectedCall, setSelectedCall] = useState<"call1" | "call2" | "coldcall" | null>(() => {
-    const saved = localStorage.getItem("tp.selectedCall");
+    const saved = getStorage("tp.selectedCall");
     return (saved as "call1" | "call2" | "coldcall") || "coldcall";
   });
   const [script, setScript] = useState<Script>(() => {
-    const saved = localStorage.getItem("tp.selectedCall");
+    const saved = getStorage("tp.selectedCall");
     if (saved === "call1") return call1Script;
     if (saved === "call2") return call2Script;
     return coldCallScript;
   });
   const [activeId, setActiveId] = useState(() => {
-    const saved = localStorage.getItem("tp.selectedCall");
+    const saved = getStorage("tp.selectedCall");
     if (saved === "call1") return call1Script.lines[0]?.id ?? 1;
     if (saved === "call2") return call2Script.lines[0]?.id ?? 1;
     return coldCallScript.lines[0]?.id ?? 1;
@@ -89,15 +109,15 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [devices, setDevices] = useState<string[]>([]);
-  const [device, setDevice] = useState<string | null>(() => localStorage.getItem("tp.device"));
+  const [device, setDevice] = useState<string | null>(() => getStorage("tp.device"));
   const [engine, setEngine] = useState<"apple" | "deepgram">(() => {
-    const saved = localStorage.getItem("tp.engine");
+    const saved = getStorage("tp.engine");
     return saved === "deepgram" ? "deepgram" : "apple";
   });
 
   const chooseEngine = useCallback((next: "apple" | "deepgram") => {
     setEngine(next);
-    localStorage.setItem("tp.engine", next);
+    setStorage("tp.engine", next);
   }, []);
 
   // Objection battlecard currently shown (⌃0–⌃9), and the prospect context card fields.
@@ -107,13 +127,13 @@ export default function App() {
   const [prospectNote, setProspectNote] = useState("");
   // Bare 1-9/0 battlecard keys (Accessibility tap; defaults to ON).
   const [bareKeys, setBareKeys] = useState(() => {
-    const saved = localStorage.getItem("tp.bareKeys");
+    const saved = getStorage("tp.bareKeys");
     return saved !== null ? saved === "true" : true;
   });
   const [bareNote, setBareNote] = useState("");
   const [prospect, setProspect] = useState<{ name: string; company: string; niche: string }>(() => {
     try {
-      const raw = localStorage.getItem("tp.prospect");
+      const raw = getStorage("tp.prospect");
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<{ name: string; company: string; niche: string }>;
         return {
@@ -129,7 +149,7 @@ export default function App() {
   });
 
   useEffect(() => {
-    localStorage.setItem("tp.prospect", JSON.stringify(prospect));
+    setStorage("tp.prospect", JSON.stringify(prospect));
   }, [prospect]);
 
   useEffect(() => {
@@ -225,7 +245,9 @@ export default function App() {
   // Edit mode = click-through is off: the window is unlocked, draggable and clickable.
   useEffect(() => {
     invoke<{ edit_mode: boolean }>("hud_state")
-      .then((s) => setEditMode(s.edit_mode))
+      .then((s) => {
+        if (s && typeof s.edit_mode === "boolean") setEditMode(s.edit_mode);
+      })
       .catch(() => undefined);
     const off = listen<boolean>("edit_mode", (e) => setEditMode(e.payload));
     return () => {
@@ -269,14 +291,16 @@ export default function App() {
         "start_session",
         { device, engine }
       );
-      if (info.engine && info.engine !== engine) {
-        setEngine(info.engine as "apple" | "deepgram");
+      if (info && info.device) {
+        if (info.engine && info.engine !== engine) {
+          setEngine(info.engine as "apple" | "deepgram");
+        }
+        const isCs = /crystal/i.test(info.device.device);
+        setStatus({
+          running: true,
+          message: isCs ? `✨ ${info.device.device} (AI Filtered)` : `listening on ${info.device.device}`,
+        });
       }
-      const isCs = /crystal/i.test(info.device.device);
-      setStatus({
-        running: true,
-        message: isCs ? `✨ ${info.device.device} (AI Filtered)` : `listening on ${info.device.device}`,
-      });
     } catch (e) {
       setError(String(e));
     } finally {
@@ -305,14 +329,16 @@ export default function App() {
           "start_session",
           { device: targetDevice, engine }
         );
-        if (info.engine && info.engine !== engine) {
-          setEngine(info.engine as "apple" | "deepgram");
+        if (info && info.device) {
+          if (info.engine && info.engine !== engine) {
+            setEngine(info.engine as "apple" | "deepgram");
+          }
+          const isCs = /crystal/i.test(info.device.device);
+          setStatus({
+            running: true,
+            message: isCs ? `✨ ${info.device.device} (AI Filtered)` : `listening on ${info.device.device}`,
+          });
         }
-        const isCs = /crystal/i.test(info.device.device);
-        setStatus({
-          running: true,
-          message: isCs ? `✨ ${info.device.device} (AI Filtered)` : `listening on ${info.device.device}`,
-        });
         if (type === "call1" || type === "call2") {
           invoke<string>("system_audio_start").catch(() => undefined);
         }
@@ -336,11 +362,13 @@ export default function App() {
           "start_session",
           { device, engine: next }
         );
-        const isCs = /crystal/i.test(info.device.device);
-        setStatus({
-          running: true,
-          message: isCs ? `✨ ${info.device.device} (AI Filtered)` : `listening on ${info.device.device}`,
-        });
+        if (info && info.device) {
+          const isCs = /crystal/i.test(info.device.device);
+          setStatus({
+            running: true,
+            message: isCs ? `✨ ${info.device.device} (AI Filtered)` : `listening on ${info.device.device}`,
+          });
+        }
       } catch (e) {
         setError(String(e));
       } finally {
@@ -351,6 +379,7 @@ export default function App() {
 
   // Synchronize initial script selection with the backend and auto-start listening
   useEffect(() => {
+    if (!selectedCall) return;
     invoke("select_script", { callType: selectedCall }).catch(() => undefined);
     const timer = setTimeout(() => {
       start();
@@ -399,6 +428,7 @@ export default function App() {
   useEffect(() => {
     invoke<string[]>("list_devices")
       .then((list) => {
+        if (!Array.isArray(list)) return;
         setDevices(list);
         const saved = localStorage.getItem("tp.device");
         const cs = list.find((d) => /crystal/i.test(d));
@@ -456,15 +486,33 @@ export default function App() {
       }
       if (e.key === "ArrowDown" || e.key === "ArrowRight") {
         e.preventDefault();
-        invoke("nudge", { delta: 1 })
-          .then((id) => setActiveId(id as number))
-          .catch(() => undefined);
+        if (isTauri) {
+          invoke("nudge", { delta: 1 })
+            .then((id) => {
+              if (typeof id === "number") setActiveId(id);
+            })
+            .catch(() => undefined);
+        } else {
+          setActiveId((prev) => {
+            const idx = script.lines.findIndex((l) => l.id === prev);
+            return idx >= 0 && idx < script.lines.length - 1 ? script.lines[idx + 1].id : prev;
+          });
+        }
       }
       if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
         e.preventDefault();
-        invoke("nudge", { delta: -1 })
-          .then((id) => setActiveId(id as number))
-          .catch(() => undefined);
+        if (isTauri) {
+          invoke("nudge", { delta: -1 })
+            .then((id) => {
+              if (typeof id === "number") setActiveId(id);
+            })
+            .catch(() => undefined);
+        } else {
+          setActiveId((prev) => {
+            const idx = script.lines.findIndex((l) => l.id === prev);
+            return idx > 0 ? script.lines[idx - 1].id : prev;
+          });
+        }
       }
     };
     window.addEventListener("keydown", onKey);
@@ -729,6 +777,17 @@ export default function App() {
                 : selectedCall === "call2"
                   ? "💼 Close (Call 2) ▾"
                   : "📞 Cold Call ▾"}
+            </button>
+            <button
+              type="button"
+              className="call-change-btn"
+              onClick={() => {
+                setSelectedCall(null);
+                localStorage.removeItem("tp.selectedCall");
+              }}
+              title="Choose another call or change prospect"
+            >
+              Change
             </button>
             <button
               className="engine-pill"

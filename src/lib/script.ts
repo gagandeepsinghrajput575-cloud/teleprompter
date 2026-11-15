@@ -142,14 +142,37 @@ export function parseAnnotations(raw: string): {
   return { body: body.replace(/\s+/g, " ").trim(), cue, annotations };
 }
 
-type RawLine = Omit<ScriptLine, "body" | "cue" | "annotations">;
-type RawScript = Omit<Script, "lines"> & { lines: RawLine[] };
+export type RawLine = Omit<ScriptLine, "body" | "cue" | "annotations">;
+export type RawScript = Omit<Script, "lines"> & { lines: RawLine[] };
 
-/** Parses every line and derives the delivery cue from its raw text. */
-export function loadScript(raw: RawScript): Script {
+/** Parses every line and derives the delivery cue from its raw text. Supports both legacy lines and flowchart schemas. */
+export function loadScript(
+  raw: Partial<RawScript> & { center?: unknown[]; branches?: unknown[]; title?: string }
+): Script {
+  const rawAny = raw as Record<string, unknown>;
+  const rawLines: RawLine[] = (raw.lines as RawLine[]) ?? [
+    ...((rawAny.center as Record<string, unknown>[]) ?? []).map((c) => ({
+      id: Number(c.id),
+      phase: (c.turn as string) ?? "Center Path",
+      label: (c.label as string) ?? "",
+      raw: (c.raw as string) ?? ((c.beats as string[]) ?? []).join(" "),
+      branches: [],
+    })),
+    ...((rawAny.branches as Record<string, unknown>[]) ?? []).map((b) => ({
+      id: Number(b.id),
+      phase: b.side === "left" ? "Left Objection" : "Right Objection",
+      label: (b.label as string) ?? "",
+      raw: (b.raw as string) ?? ((b.beats as string[]) ?? []).join(" "),
+      branches: [],
+    })),
+  ];
+
   return {
     ...raw,
-    lines: raw.lines.map((line) => {
+    id: raw.id ?? "script",
+    version: raw.version ?? 1,
+    title: raw.title ?? "Script",
+    lines: rawLines.map((line) => {
       const { body, cue, annotations } = parseAnnotations(line.raw);
       return {
         id: line.id,

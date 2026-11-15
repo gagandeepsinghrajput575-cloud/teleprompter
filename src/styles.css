@@ -1,12 +1,15 @@
-/* The webview itself must be transparent in native HUD mode.
+/* Fallback dark background so the window is never transparent zero-opacity.
    In standard browser mode (localhost:1420), .in-browser provides the dark theme. */
 html,
 body,
 #root {
   margin: 0;
   padding: 0;
+  width: 100%;
   height: 100%;
-  background: transparent;
+  min-height: 100%;
+  box-sizing: border-box;
+  background: #0d0d12;
   color: #f1ece2;
 }
 
@@ -25,22 +28,24 @@ body {
   /* Nothing in the HUD should ever become a text selection target. */
   user-select: none;
   cursor: default;
+  background: #0d0d12;
 }
 
 .hud {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  width: 100%;
   height: 100%;
+  min-height: 100%;
   padding: 10px;
   border-radius: 12px;
-  /* NOTE (VAL-OVL-009): backdrop-filter cannot blur the desktop behind a
-     native window. This keeps the pane legible; real vibrancy is a native
-     window effect added in T2. */
-  background: rgba(15, 15, 15, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(18, 18, 24, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.7);
   box-sizing: border-box;
   overflow: hidden;
+  position: relative;
 }
 
 .line {
@@ -303,20 +308,28 @@ body {
 }
 
 .blocks {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 200px;
   overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: 2px;
   scroll-behavior: smooth;
-  /* Fade the edges so neighbours read as peeks rather than content. */
+  /* Fade the edges slightly while preserving legible non-zero opacity */
   mask-image: linear-gradient(
     to bottom,
-    transparent 0,
+    rgba(0, 0, 0, 0.45) 0,
     #000 14%,
     #000 86%,
-    transparent 100%
+    rgba(0, 0, 0, 0.45) 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.45) 0,
+    #000 14%,
+    #000 86%,
+    rgba(0, 0, 0, 0.45) 100%
   );
 }
 
@@ -444,12 +457,20 @@ body {
 .call-modal {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: center;
   gap: 10px;
+  width: 100%;
   height: 100%;
-  padding: 14px 10px;
+  min-height: 0;
+  flex: 1 1 auto;
+  padding: 16px 12px;
   text-align: center;
+  box-sizing: border-box;
+  overflow-y: auto;
+  background: rgba(20, 20, 26, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
 }
 
 .call-modal-title {
@@ -535,6 +556,24 @@ body {
   background: rgba(212, 175, 55, 0.3);
 }
 
+.call-change-btn {
+  font-size: 8px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 150ms ease;
+}
+
+.call-change-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+}
+
 .engine-selection-box {
   width: 100%;
   box-sizing: border-box;
@@ -617,11 +656,6 @@ body {
   position: relative;
 }
 
-/* The selector gained prospect fields; allow it to scroll rather than clip in the short HUD. */
-.call-modal {
-  overflow-y: auto;
-  gap: 8px;
-}
 
 .prospect-box {
   display: flex;
@@ -1264,10 +1298,13 @@ body {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  min-height: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 250px;
   position: relative;
   overflow: hidden;
   background: #0d0d0f;
+  border-radius: 8px;
 }
 
 .flow-toolbar {

@@ -1,11 +1,6 @@
-import { createElement } from "react";
-import { renderToString } from "react-dom/server";
-import { beforeEach, describe, expect, it } from "vitest";
-import App from "./App";
-
-if (typeof localStorage === "undefined") {
+if (typeof localStorage === "undefined" || !globalThis.localStorage) {
   const store = new Map<string, string>();
-  globalThis.localStorage = {
+  const mockStorage = {
     getItem: (key: string) => store.get(key) ?? null,
     setItem: (key: string, value: string) => store.set(key, String(value)),
     removeItem: (key: string) => store.delete(key),
@@ -14,8 +9,18 @@ if (typeof localStorage === "undefined") {
     get length() {
       return store.size;
     },
-  } as Storage;
+  };
+  Object.defineProperty(globalThis, "localStorage", {
+    value: mockStorage,
+    writable: true,
+    configurable: true,
+  });
 }
+
+import { createElement } from "react";
+import { renderToString } from "react-dom/server";
+import { beforeEach, describe, expect, it } from "vitest";
+import App from "./App";
 
 describe("App render", () => {
   beforeEach(() => {

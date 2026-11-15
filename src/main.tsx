@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import "./lib/tauri";
 import App from "./App";
 import "./styles.css";
 

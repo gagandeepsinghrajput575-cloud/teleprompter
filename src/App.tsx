@@ -1,7 +1,5 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow, PhysicalPosition } from "@tauri-apps/api/window";
+import { isTauri, safeInvoke as invoke, safeListen as listen } from "./lib/tauri";
 import { cueChips } from "./lib/cues";
 import { OBJECTIONS, objectionFor, type Objection } from "./lib/objections";
 import { loadScript, parseAnnotations, type Script } from "./lib/script";
@@ -529,66 +527,68 @@ export default function App() {
 
   const onDragStart = useCallback(
     (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!editMode || e.button !== 0) return;
+      if (!isTauri || !editMode || e.button !== 0) return;
       if ((e.target as HTMLElement).closest("button, input, select, textarea, a")) return;
 
-      const win = getCurrentWindow();
-      const originX = e.clientX;
-      const originY = e.clientY;
-      const dpr = window.devicePixelRatio || 1;
-      let start: PhysicalPosition | null = null;
-      let pending: PhysicalPosition | null = null;
-      let frame = 0;
+      import("@tauri-apps/api/window").then(({ getCurrentWindow, PhysicalPosition }) => {
+        const win = getCurrentWindow();
+        const originX = e.clientX;
+        const originY = e.clientY;
+        const dpr = window.devicePixelRatio || 1;
+        let start: { x: number; y: number } | null = null;
+        let pending: { x: number; y: number } | null = null;
+        let frame = 0;
 
-      const flush = () => {
-        frame = 0;
-        if (!pending) return;
-        const next = pending;
-        pending = null;
-        win.setPosition(next).catch((err) => {
-          invoke("drag_probe", { mode: "manual-error", detail: String(err) }).catch(
-            () => undefined
-          );
-        });
-      };
+        const flush = () => {
+          frame = 0;
+          if (!pending) return;
+          const next = new PhysicalPosition(pending.x, pending.y);
+          pending = null;
+          win.setPosition(next).catch((err) => {
+            invoke("drag_probe", { mode: "manual-error", detail: String(err) }).catch(
+              () => undefined
+            );
+          });
+        };
 
-      const move = (ev: PointerEvent) => {
-        if (!start) return;
-        pending = new PhysicalPosition(
-          Math.round(start.x + (ev.clientX - originX) * dpr),
-          Math.round(start.y + (ev.clientY - originY) * dpr)
-        );
-        if (!frame) frame = requestAnimationFrame(flush);
-      };
+        const move = (ev: PointerEvent) => {
+          if (!start) return;
+          pending = {
+            x: Math.round(start.x + (ev.clientX - originX) * dpr),
+            y: Math.round(start.y + (ev.clientY - originY) * dpr),
+          };
+          if (!frame) frame = requestAnimationFrame(flush);
+        };
 
-      const up = () => {
-        if (frame) cancelAnimationFrame(frame);
-        frame = 0;
-        window.removeEventListener("pointermove", move);
-        window.removeEventListener("pointerup", up);
-        flush();
-      };
+        const up = () => {
+          if (frame) cancelAnimationFrame(frame);
+          frame = 0;
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+          flush();
+        };
 
-      win
-        .outerPosition()
-        .then((pos) => {
-          start = pos;
-          invoke("drag_probe", { mode: "manual", detail: `from ${pos.x},${pos.y}` }).catch(
-            () => undefined
-          );
-          try {
-            e.currentTarget.setPointerCapture(e.pointerId);
-          } catch {
-            // pointer capture fallback
-          }
-          window.addEventListener("pointermove", move);
-          window.addEventListener("pointerup", up, { once: true });
-        })
-        .catch((err) => {
-          invoke("drag_probe", { mode: "no-position", detail: String(err) }).catch(
-            () => undefined
-          );
-        });
+        win
+          .outerPosition()
+          .then((pos) => {
+            start = pos;
+            invoke("drag_probe", { mode: "manual", detail: `from ${pos.x},${pos.y}` }).catch(
+              () => undefined
+            );
+            try {
+              e.currentTarget.setPointerCapture(e.pointerId);
+            } catch {
+              // pointer capture fallback
+            }
+            window.addEventListener("pointermove", move);
+            window.addEventListener("pointerup", up, { once: true });
+          })
+          .catch((err) => {
+            invoke("drag_probe", { mode: "no-position", detail: String(err) }).catch(
+              () => undefined
+            );
+          });
+      });
     },
     [editMode]
   );

@@ -1,5 +1,5 @@
-/* The webview itself must be transparent, otherwise the "glass" HUD sits on a
-   white rectangle. Tauri's window transparency + this file = a frameless HUD. */
+/* The webview itself must be transparent in native HUD mode.
+   In standard browser mode (localhost:1420), .in-browser provides the dark theme. */
 html,
 body,
 #root {
@@ -7,6 +7,15 @@ body,
   padding: 0;
   height: 100%;
   background: transparent;
+  color: #f1ece2;
+}
+
+.in-browser,
+.in-browser body,
+.in-browser #root,
+.in-browser .hud {
+  background: #0d0d0f !important;
+  color: #f1ece2 !important;
 }
 
 body {

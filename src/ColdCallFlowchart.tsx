@@ -32,45 +32,50 @@ type Props = {
   now?: Date;
 };
 
-// Default layout generator
+// Default layout generator with spacious non-overlapping positions
 function buildDefaultPositions(allCards: FlowCard[]): Record<number, NodePosition> {
   const positions: Record<number, NodePosition> = {};
-  const leftX = 60;
+  const leftX = 40;
   const centerX = 500;
-  const rightX = 940;
+  const rightX = 960;
 
-  // Center spine turns 1 to 7
+  // Center spine turns 1 to 7 (spaced out with room for tall cards)
   const spineY: Record<number, number> = {
     1: 40,
-    2: 300,
-    3: 580,
-    4: 900,
-    5: 1240,
-    6: 1500,
-    7: 1740,
+    2: 320,
+    3: 650,
+    4: 980,
+    5: 1450,
+    6: 1800,
+    7: 2100,
   };
 
-  // Branch positioning
+  // Branch positioning: carefully spaced so cards never overlap
   const branchMap: Record<number, { x: number; y: number }> = {
-    // Row 1
-    101: { x: leftX, y: 40 },
-    102: { x: leftX, y: 200 },
-    103: { x: leftX, y: 340 },
-    115: { x: rightX, y: 40 },
-    // Row 2
-    112: { x: leftX, y: 480 },
-    113: { x: leftX, y: 640 },
-    // Row 3
-    104: { x: leftX, y: 800 },
-    105: { x: rightX, y: 580 },
-    106: { x: rightX, y: 740 },
-    // Row 4
-    107: { x: rightX, y: 900 },
-    108: { x: leftX, y: 1060 },
-    109: { x: leftX, y: 1220 },
-    110: { x: rightX, y: 1060 },
-    111: { x: rightX, y: 1220 },
-    114: { x: leftX, y: 1380 },
+    // Top section: Gatekeeper & Site Objections
+    101: { x: leftX, y: 40 },     // Branch A · Employee on site
+    102: { x: rightX, y: 40 },    // What is this regarding?
+    103: { x: rightX, y: 220 },   // Is he expecting the call?
+
+    // Turn 2 section
+    112: { x: leftX, y: 320 },    // Booked out / plenty of work
+    115: { x: rightX, y: 420 },   // Objection · What is this about?
+
+    // Turn 3 section
+    104: { x: leftX, y: 650 },    // Path B · Don't take cold calls
+    105: { x: rightX, y: 880 },   // Path D · Early reflex brush-off
+    106: { x: rightX, y: 1100 },  // Path C · Where did you get my number?
+
+    // Turn 4 section
+    108: { x: leftX, y: 950 },    // Already have a web / tech guy
+    109: { x: leftX, y: 1150 },   // We don't replace your web guy
+    113: { x: leftX, y: 1400 },   // General "Not interested" after the speech
+    114: { x: leftX, y: 1620 },   // Follow-up once they answer
+
+    // Turn 5 section
+    107: { x: rightX, y: 1320 },  // Send me an email first
+    110: { x: rightX, y: 1600 },  // We don't use AI
+    111: { x: rightX, y: 1880 },  // Why is it free? / What's the catch?
   };
 
   for (const card of allCards) {
@@ -83,7 +88,7 @@ function buildDefaultPositions(allCards: FlowCard[]): Record<number, NodePositio
       const idx = allCards.indexOf(card);
       positions[card.id] = {
         x: card.side === "left" ? leftX : card.side === "right" ? rightX : centerX,
-        y: 100 + idx * 160,
+        y: 100 + idx * 240,
       };
     }
   }
@@ -101,26 +106,30 @@ function buildDefaultEdges(): FlowEdge[] {
     { id: "e5-6", fromId: 5, fromSlot: "bottom", toId: 6, toSlot: "top" },
     { id: "e6-7", fromId: 6, fromSlot: "bottom", toId: 7, toSlot: "top" },
 
-    // Row 1 connections
+    // Gatekeeper & Early Inquiries
     { id: "e101-1", fromId: 101, fromSlot: "right", toId: 1, toSlot: "left" },
     { id: "e102-103", fromId: 102, fromSlot: "bottom", toId: 103, toSlot: "top" },
-    { id: "e103-3", fromId: 103, fromSlot: "right", toId: 3, toSlot: "left" },
+    { id: "e103-3", fromId: 103, fromSlot: "left", toId: 3, toSlot: "right" },
     { id: "e115-4", fromId: 115, fromSlot: "left", toId: 4, toSlot: "right" },
 
-    // Row 2 connections
+    // Row 2 / Site objections
     { id: "e112-2", fromId: 112, fromSlot: "right", toId: 2, toSlot: "left" },
-    { id: "e113-114", fromId: 113, fromSlot: "bottom", toId: 114, toSlot: "top" },
-    { id: "e114-5", fromId: 114, fromSlot: "right", toId: 5, toSlot: "left" },
 
-    // Row 3 connections
+    // Early Reflex & Hook Objections
     { id: "e104-4", fromId: 104, fromSlot: "right", toId: 4, toSlot: "left" },
     { id: "e105-4", fromId: 105, fromSlot: "left", toId: 4, toSlot: "right" },
     { id: "e106-4", fromId: 106, fromSlot: "left", toId: 4, toSlot: "right" },
 
-    // Row 4 connections
-    { id: "e107-5", fromId: 107, fromSlot: "left", toId: 5, toSlot: "right" },
+    // Tech guy chain
     { id: "e108-109", fromId: 108, fromSlot: "bottom", toId: 109, toSlot: "top" },
     { id: "e109-5", fromId: 109, fromSlot: "right", toId: 5, toSlot: "left" },
+
+    // General not interested chain
+    { id: "e113-114", fromId: 113, fromSlot: "bottom", toId: 114, toSlot: "top" },
+    { id: "e114-5", fromId: 114, fromSlot: "right", toId: 5, toSlot: "left" },
+
+    // Offer & Time Lock Objections
+    { id: "e107-5", fromId: 107, fromSlot: "left", toId: 5, toSlot: "right" },
     { id: "e110-5", fromId: 110, fromSlot: "left", toId: 5, toSlot: "right" },
     { id: "e111-5", fromId: 111, fromSlot: "left", toId: 5, toSlot: "right" },
   ];
@@ -179,7 +188,7 @@ export default function ColdCallFlowchart({
     const defaults = buildDefaultPositions(allCards);
     if (typeof window === "undefined") return defaults;
     try {
-      const saved = localStorage.getItem("tp.flow.positions");
+      const saved = localStorage.getItem("tp.flow.positions.v2");
       return saved ? { ...defaults, ...JSON.parse(saved) } : defaults;
     } catch {
       return defaults;
@@ -191,7 +200,7 @@ export default function ColdCallFlowchart({
     const defaults = buildDefaultEdges();
     if (typeof window === "undefined") return defaults;
     try {
-      const saved = localStorage.getItem("tp.flow.edges");
+      const saved = localStorage.getItem("tp.flow.edges.v2");
       return saved ? JSON.parse(saved) : defaults;
     } catch {
       return defaults;
@@ -232,7 +241,7 @@ export default function ColdCallFlowchart({
   const savePositions = useCallback((newPos: Record<number, NodePosition>) => {
     setPositions(newPos);
     try {
-      localStorage.setItem("tp.flow.positions", JSON.stringify(newPos));
+      localStorage.setItem("tp.flow.positions.v2", JSON.stringify(newPos));
     } catch {
       // ignore
     }
@@ -241,7 +250,7 @@ export default function ColdCallFlowchart({
   const saveEdges = useCallback((newEdges: FlowEdge[]) => {
     setEdges(newEdges);
     try {
-      localStorage.setItem("tp.flow.edges", JSON.stringify(newEdges));
+      localStorage.setItem("tp.flow.edges.v2", JSON.stringify(newEdges));
     } catch {
       // ignore
     }

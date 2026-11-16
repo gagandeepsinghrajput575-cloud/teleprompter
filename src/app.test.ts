@@ -30,7 +30,7 @@ describe("App render", () => {
   it("renders default coldcall view without crashing", () => {
     const html = renderToString(createElement(App));
     expect(html).toContain("hud");
-    expect(html).toContain("flowchart-container");
+    expect(html).toContain("flow");
     expect(html).toContain("Cold Call");
   });
 

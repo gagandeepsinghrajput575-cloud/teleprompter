@@ -1,20 +1,22 @@
 {
   "id": "scalix-cold-call-v1",
   "title": "Scalix Elite · Live Call Flowchart",
-  "version": 1,
+  "version": 2,
   "audience": "established remodeling firms, Denmark",
-  "notes": "Verbatim copy of the Scalix Elite live call flowchart. Center path is Turns 1-7; branches are the objection cards. `raw`/`beats` are the spoken words only (delivery emoji kept, as authored). `anchors` are the opening words of each beat; `objectionAnchors` are the rep-first 2-3 word openers that must switch the card with zero latency.",
+  "notes": "Verbatim copy of the Scalix Elite live call script provided by user.",
   "center": [
     {
       "id": 1,
       "turn": "Turn 1",
-      "label": "Opening & Job Site check",
-      "raw": "[Prospect Name], hi. It's Gagan from Scalix Elite ⬇️. You're not in the middle of a job site right now, are you?",
+      "label": "Opening",
+      "raw": "\"[Prospect Name], hi. It's Gagan from Scalix Elite ⬇️.\n\n\"How you doing?\"",
       "beats": [
-        "[Prospect Name], hi. It's Gagan from Scalix Elite ⬇️. You're not in the middle of a job site right now, are you?"
+        "\"[Prospect Name], hi. It's Gagan from Scalix Elite ⬇️.",
+        "\"How you doing?\""
       ],
       "anchors": [
-        "hi its gagan from"
+        "hi its gagan from",
+        "how you doing"
       ],
       "objectionAnchors": [],
       "next": 2
@@ -22,17 +24,20 @@
     {
       "id": 2,
       "turn": "Turn 2",
-      "label": "On-Site check",
-      "raw": "🐢 Understood. When do you get all this right? ⏸️ After that, when they say whatever timing, I would say: if it's okay, can I call you at that time 🤔?",
+      "label": "On-Site / Tools Running",
+      "trigger": "I'm on site / driving / busy right now\n\"I'm standing on a job site right now, make it quick.\"",
+      "raw": "🐢 Understood, I won't waste your site time ⬇️. ⏸️ I can give you a quick call back at 15:30 tomorrow, or later this week, does that work 🤔?\n\nIf 15:30: \"Done. Talk at 15:30.\" (Hang up cleanly)",
       "beats": [
-        "🐢 Understood. When do you get all this right? ⏸️ After that, when they say whatever timing, I would say: if it's okay, can I call you at that time 🤔?"
+        "🐢 Understood, I won't waste your site time ⬇️. ⏸️ I can give you a quick call back at 15:30 tomorrow, or later this week, does that work 🤔?",
+        "If 15:30: \"Done. Talk at 15:30.\" (Hang up cleanly)"
       ],
       "anchors": [
-        "understood when do you"
+        "understood i wont waste",
+        "done talk at 15"
       ],
       "objectionAnchors": [
-        "understood when do you",
-        "understood when"
+        "understood i wont waste",
+        "understood i wont"
       ],
       "next": 3
     },
@@ -40,9 +45,10 @@
       "id": 3,
       "turn": "Turn 3",
       "label": "The Hook & Assumption",
-      "raw": "🐢 Good ⬇️. ⏸️ ⚡ I'm reaching out, [Prospect Name], because we work with established remodeling firms across Denmark—🐢 to be precise, teams with a strong local reputation ⬇️. ⏸️ We aren't calling to sell leads or pitch generic marketing ⬇️. ⏸️ Looking at your projects, I'm assuming you guys run a core crew of roughly 4 to 8 people on site right now 🤔?",
+      "trigger": "• If 4–8: \"Got it.\" → Turn 4\n• If 2–3: \"Got it, so you're on tools yourself all day.\" → Turn 4\n• If 10+: \"Got it, so you're even busier than I thought.\" → Turn 4",
+      "raw": "🐢 Good ⬇️. ⏸️ ⚡ I'm reaching out, [Prospect Name], because we work with remodeling firms across Denmark—⏸️ Btw, I am not calling to sell leads or pitch generic marketing ⬇️. ⏸️ I'm assuming you guys run a team of roughly 4 to 8 people right now 🤔?",
       "beats": [
-        "🐢 Good ⬇️. ⏸️ ⚡ I'm reaching out, [Prospect Name], because we work with established remodeling firms across Denmark—🐢 to be precise, teams with a strong local reputation ⬇️. ⏸️ We aren't calling to sell leads or pitch generic marketing ⬇️. ⏸️ Looking at your projects, I'm assuming you guys run a core crew of roughly 4 to 8 people on site right now 🤔?"
+        "🐢 Good ⬇️. ⏸️ ⚡ I'm reaching out, [Prospect Name], because we work with remodeling firms across Denmark—⏸️ Btw, I am not calling to sell leads or pitch generic marketing ⬇️. ⏸️ I'm assuming you guys run a team of roughly 4 to 8 people right now 🤔?"
       ],
       "anchors": [
         "good im reaching out"
@@ -54,12 +60,19 @@
       "id": 4,
       "turn": "Turn 4",
       "label": "The Leak & The Offer",
-      "raw": "Got it ⬇️. Yeah, so ⚡ the reason for the call is that at that team size, most firms leak 40,000 to 80,000 DKK in clean gross profit margin simply because high-ticket calls hit voicemail while the crew is on site ⬇️. ⏸️ And that's actually just one of the leaks—there are a couple of other leaks which drain time and revenue ⬇️. ⏸️ ⚡ So we take a look at how you currently run things ⏸️ to find any possible hidden gaps leaking revenue or taking up too much time ⬇️. ⏸️ 🐢 Then, before you invest anything, we identify where AI brings meaningful fixes, and put together a customized plan for how to actually implement it in your business ⬇️. ⏸️ ⚡ And [Prospect Name], before committing to anything, 🐢 I'm just looking to find 10 minutes either tomorrow or later this week, just so you can see what that would even look like for you guys ⬇️.",
+      "trigger": "Yes / engaged → Turn 5",
+      "raw": "Got it ⬇️. Yeah, so ⚡ the reason for the call is that at that team size, most firms leak 40,000 to 80,000 DKK in clean gross profit margin simply because high-ticket calls hit voicemail while the crew is on site ⬇️. ⏸️ And that's actually just one of the leaks—there are a couple of other leaks which drain time and revenue ⬇️. ⏸️\n\n⚡ So we take a look at how you currently run things ⏸️ to find any possible hidden gaps leaking revenue or taking up too much time ⬇️. ⏸️\n\n🐢 Then, before you invest anything, we identify where AI brings meaningful fixes, and for free we will put together a customized plan for you on how to actually implement it in your business ⬇️. ⏸️\n\n⚡ [Prospect Name], are you with me 🤔?",
       "beats": [
-        "Got it ⬇️. Yeah, so ⚡ the reason for the call is that at that team size, most firms leak 40,000 to 80,000 DKK in clean gross profit margin simply because high-ticket calls hit voicemail while the crew is on site ⬇️. ⏸️ And that's actually just one of the leaks—there are a couple of other leaks which drain time and revenue ⬇️. ⏸️ ⚡ So we take a look at how you currently run things ⏸️ to find any possible hidden gaps leaking revenue or taking up too much time ⬇️. ⏸️ 🐢 Then, before you invest anything, we identify where AI brings meaningful fixes, and put together a customized plan for how to actually implement it in your business ⬇️. ⏸️ ⚡ And [Prospect Name], before committing to anything, 🐢 I'm just looking to find 10 minutes either tomorrow or later this week, just so you can see what that would even look like for you guys ⬇️."
+        "Got it ⬇️. Yeah, so ⚡ the reason for the call is that at that team size, most firms leak 40,000 to 80,000 DKK in clean gross profit margin simply because high-ticket calls hit voicemail while the crew is on site ⬇️. ⏸️ And that's actually just one of the leaks—there are a couple of other leaks which drain time and revenue ⬇️. ⏸️",
+        "⚡ So we take a look at how you currently run things ⏸️ to find any possible hidden gaps leaking revenue or taking up too much time ⬇️. ⏸️",
+        "🐢 Then, before you invest anything, we identify where AI brings meaningful fixes, and for free we will put together a customized plan for you on how to actually implement it in your business ⬇️. ⏸️",
+        "⚡ [Prospect Name], are you with me 🤔?"
       ],
       "anchors": [
-        "got it yeah so"
+        "got it yeah so",
+        "so we take a look",
+        "then before you invest",
+        "are you with me"
       ],
       "objectionAnchors": [],
       "next": 5
@@ -68,14 +81,16 @@
       "id": 5,
       "turn": "Turn 5",
       "label": "Lock the time",
-      "raw": "🐢 Awesome. When are you naturally more free—mornings or afternoons ⬇️? To be precise, would around 12:30 or 15:30 when you're off tools work better ⬇️?",
+      "raw": "\"[Prospect Name], before committing to anything, 🐢 I am just looking to find 10 minutes either tomorrow or sometime later this week just so we can see what that 10-minute review would look like for you 🤔?\"\n\n\"🐢 Awesome. I'm assuming you're not involved in work at 15:30 ⬇️. Does that work for you 🤔?\"\n\n\"15:30 works.\"",
       "beats": [
-        "🐢 Awesome. When are you naturally more free—mornings or afternoons ⬇️?",
-        "To be precise, would around 12:30 or 15:30 when you're off tools work better ⬇️?"
+        "\"[Prospect Name], before committing to anything, 🐢 I am just looking to find 10 minutes either tomorrow or sometime later this week just so we can see what that 10-minute review would look like for you 🤔?\"",
+        "\"🐢 Awesome. I'm assuming you're not involved in work at 15:30 ⬇️. Does that work for you 🤔?\"",
+        "\"15:30 works.\""
       ],
       "anchors": [
-        "awesome when are you",
-        "to be precise would"
+        "before committing to anything",
+        "awesome im assuming youre",
+        "15 30 works"
       ],
       "objectionAnchors": [],
       "next": 6
@@ -83,13 +98,14 @@
     {
       "id": 6,
       "turn": "Turn 6",
-      "label": "Confirm the email",
-      "raw": "⚡ Perfect, 15:30 it is ⬇️. And your best email is just [firstname]@[company domain].dk, right 🤔?",
+      "label": "Get the email",
+      "trigger": "[They give their email.]",
+      "raw": "\"⚡ Perfect, [time] it is ⬇️. What's your best email to send the invite to 🤔?\"",
       "beats": [
-        "⚡ Perfect, 15:30 it is ⬇️. And your best email is just [firstname]@[company domain].dk, right 🤔?"
+        "\"⚡ Perfect, [time] it is ⬇️. What's your best email to send the invite to 🤔?\""
       ],
       "anchors": [
-        "perfect 15 30 it"
+        "perfect it is whats"
       ],
       "objectionAnchors": [],
       "next": 7
@@ -97,17 +113,22 @@
     {
       "id": 7,
       "turn": "Turn 7",
-      "label": "Spell back & sign off",
-      "raw": "🐢 Got it—that's [spell back email address slowly], right 🤔? ⚡ Perfect. I'm hitting send on that calendar invite right now—let me know if you see it pop up on your phone so we know it didn't hit spam ⬇️. 🐢 Awesome. I'm going to spend 15 minutes looking over your current site and inquiry flow before we talk so we don't waste a second ⬇️. ⏸️ And [Prospect Name]—since I'm holding this slot for you, if a site emergency pops up and you can't make 15:30, just shoot me a quick text so I'm not waiting around. Fair enough 🤔?",
+      "label": "Spell back and sign off",
+      "raw": "\"🐢 Got it—that's [spell back email address slowly], right 🤔?\"\n\n\"⚡ Perfect. I'm hitting send on that calendar invite right now—let me know if you see it pop up on your phone so we know it didn't hit spam ⬇️.\"\n\nIf driving / on tools: \"No rush if you're driving—just click accept when you park so it's locked on both our calendars.\"\n\n\"🐢 Awesome. Before we talk, I'll spend 15 minutes looking over your website and how calls come in, so we don't waste time ⬇️. ⏸️ And [Prospect Name], I'm keeping this time open for you. If something urgent comes up and you can't make 15:30, just let me know so I'm not waiting around. Fair enough 🤔?\"\n\n\"Yeah, of course / fair enough.\"\n\n\"[Prospect Name], it's done ⬇️. Talk to you later ⬇️. 🐢 Take care, have a nice day ⬇️.\"\n\nHang up cleanly.",
       "beats": [
-        "🐢 Got it—that's [spell back email address slowly], right 🤔?",
-        "⚡ Perfect. I'm hitting send on that calendar invite right now—let me know if you see it pop up on your phone so we know it didn't hit spam ⬇️.",
-        "🐢 Awesome. I'm going to spend 15 minutes looking over your current site and inquiry flow before we talk so we don't waste a second ⬇️. ⏸️ And [Prospect Name]—since I'm holding this slot for you, if a site emergency pops up and you can't make 15:30, just shoot me a quick text so I'm not waiting around. Fair enough 🤔?"
+        "\"🐢 Got it—that's [spell back email address slowly], right 🤔?\"",
+        "\"⚡ Perfect. I'm hitting send on that calendar invite right now—let me know if you see it pop up on your phone so we know it didn't hit spam ⬇️.\"",
+        "If driving / on tools: \"No rush if you're driving—just click accept when you park so it's locked on both our calendars.\"",
+        "\"🐢 Awesome. Before we talk, I'll spend 15 minutes looking over your website and how calls come in, so we don't waste time ⬇️. ⏸️ And [Prospect Name], I'm keeping this time open for you. If something urgent comes up and you can't make 15:30, just let me know so I'm not waiting around. Fair enough 🤔?\"",
+        "\"Yeah, of course / fair enough.\"",
+        "\"[Prospect Name], it's done ⬇️. Talk to you later ⬇️. 🐢 Take care, have a nice day ⬇️.\"",
+        "Hang up cleanly."
       ],
       "anchors": [
         "got it thats right",
         "perfect im hitting send",
-        "awesome im going to"
+        "awesome before we talk",
+        "its done talk to"
       ],
       "objectionAnchors": [],
       "next": null
@@ -119,9 +140,9 @@
       "side": "left",
       "label": "Branch A · Employee on site",
       "trigger": "Employee on site / \"I'm one of his guys\"",
-      "raw": "🐢 Alright, I'm trying to reach [Owner's First Name]'s direct mobile regarding an operations review, and I think I dialed the site line by mistake ⬇️. What's the best phone number to catch him on directly 🤔?",
+      "raw": "\"🐢 Alright, I'm trying to reach [Owner's First Name]'s direct mobile regarding an operations review, and I think I dialed the site line by mistake ⬇️. What's the best phone number to catch him on directly 🤔?\"",
       "beats": [
-        "🐢 Alright, I'm trying to reach [Owner's First Name]'s direct mobile regarding an operations review, and I think I dialed the site line by mistake ⬇️. What's the best phone number to catch him on directly 🤔?"
+        "\"🐢 Alright, I'm trying to reach [Owner's First Name]'s direct mobile regarding an operations review, and I think I dialed the site line by mistake ⬇️. What's the best phone number to catch him on directly 🤔?\""
       ],
       "anchors": [
         "alright im trying to"
@@ -134,9 +155,9 @@
       "side": "left",
       "label": "What is this regarding?",
       "trigger": "He's on site / in a meeting. What is this regarding?",
-      "raw": "⚡ It's Gagan from Scalix ⬇️. It's regarding the operations review for [Owner's First Name] ⬇️.",
+      "raw": "\"⚡ It's Gagan from Scalix ⬇️. It's regarding the operations review for [Owner's First Name] ⬇️.\"",
       "beats": [
-        "⚡ It's Gagan from Scalix ⬇️. It's regarding the operations review for [Owner's First Name] ⬇️."
+        "\"⚡ It's Gagan from Scalix ⬇️. It's regarding the operations review for [Owner's First Name] ⬇️.\""
       ],
       "anchors": [
         "its gagan from scalix"
@@ -144,16 +165,16 @@
       "objectionAnchors": [
         "what is this regarding"
       ],
-      "next": 3
+      "next": 103
     },
     {
       "id": 103,
       "side": "left",
       "label": "Is he expecting the call?",
       "trigger": "If they ask: \"Is he expecting the call?\"",
-      "raw": "🐢 Not personally—his firm was placed on our research shortlist for this quarter's reviews ⬇️. ⏸️ When is he naturally less busy 🤔?",
+      "raw": "\"🐢 Not personally—his firm was placed on our research shortlist for this quarter's reviews ⬇️. ⏸️ When is he naturally less busy 🤔?\"",
       "beats": [
-        "🐢 Not personally—his firm was placed on our research shortlist for this quarter's reviews ⬇️. ⏸️ When is he naturally less busy 🤔?"
+        "\"🐢 Not personally—his firm was placed on our research shortlist for this quarter's reviews ⬇️. ⏸️ When is he naturally less busy 🤔?\""
       ],
       "anchors": [
         "not personally his firm"
@@ -164,13 +185,33 @@
       "next": 3
     },
     {
+      "id": 115,
+      "side": "right",
+      "label": "Objection · What is this about?",
+      "trigger": "\"What is this about?\" / \"Who is this regarding?\"",
+      "raw": "\"⚡ Fair enough, [Prospect Name]—I'll be straight with you ⬇️. We build call systems for remodeling firms across Denmark that catch missed calls, filter inquiries, and book jobs while your crew is on tools ⬇️. ⏸️ 🐢 At your crew size, most firms lose 40,000 to 80,000 DKK every month when project calls hit voicemail—and that's actually just one of the leaks draining time and revenue ⬇️. ⏸️ So we take a quick 10-minute look at how you currently run things to find those hidden gaps and map out a plan to implement the fixes ⬇️. [Prospect Name], are you with me 🤔?\"\n\n\"[Prospect Name], before committing to anything, 🐢 I'm just looking to find 10 minutes either tomorrow or sometime later this week, just so we can see what that 10-minute look would look like for you ⬇️.\"",
+      "beats": [
+        "\"⚡ Fair enough, [Prospect Name]—I'll be straight with you ⬇️. We build call systems for remodeling firms across Denmark that catch missed calls, filter inquiries, and book jobs while your crew is on tools ⬇️. ⏸️ 🐢 At your crew size, most firms lose 40,000 to 80,000 DKK every month when project calls hit voicemail—and that's actually just one of the leaks draining time and revenue ⬇️. ⏸️ So we take a quick 10-minute look at how you currently run things to find those hidden gaps and map out a plan to implement the fixes ⬇️. [Prospect Name], are you with me 🤔?\"",
+        "\"[Prospect Name], before committing to anything, 🐢 I'm just looking to find 10 minutes either tomorrow or sometime later this week, just so we can see what that 10-minute look would look like for you ⬇️.\""
+      ],
+      "anchors": [
+        "fair enough ill be"
+      ],
+      "objectionAnchors": [
+        "fair enough ill be straight",
+        "fair enough ill be",
+        "fair enough"
+      ],
+      "next": 4
+    },
+    {
       "id": 104,
       "side": "left",
       "label": "Path B · Don't take cold calls",
-      "trigger": "I'm skeptical / I don't take cold calls",
-      "raw": "🐢 Neither do I, [Prospect Name], if I can possibly avoid it ⬇️. ⏸️ ⚡ But the problem is: your existing software or web guys aren't telling you about this, and you aren't going to go looking for it on your own because you don't know it exists yet ⬇️. ⏸️ 🐢 So looking past the phone call for 60 seconds—how about I quickly state the reason I called ⬇️?",
+      "trigger": "Look, I don't really take cold calls. (\"Okay, make it quick\" → Turn 4)",
+      "raw": "\"🐢 Neither do I, [Prospect Name], if I can possibly avoid it ⬇️. ⏸️ ⚡ But the problem is: your existing software or web guys aren't telling you about this, and you aren't going to go looking for it on your own because you don't know it exists yet ⬇️. ⏸️ 🐢 So looking past the phone call for 60 seconds—how about I quickly state the reason I called ⬇️?\"",
       "beats": [
-        "🐢 Neither do I, [Prospect Name], if I can possibly avoid it ⬇️. ⏸️ ⚡ But the problem is: your existing software or web guys aren't telling you about this, and you aren't going to go looking for it on your own because you don't know it exists yet ⬇️. ⏸️ 🐢 So looking past the phone call for 60 seconds—how about I quickly state the reason I called ⬇️?"
+        "\"🐢 Neither do I, [Prospect Name], if I can possibly avoid it ⬇️. ⏸️ ⚡ But the problem is: your existing software or web guys aren't telling you about this, and you aren't going to go looking for it on your own because you don't know it exists yet ⬇️. ⏸️ 🐢 So looking past the phone call for 60 seconds—how about I quickly state the reason I called ⬇️?\""
       ],
       "anchors": [
         "neither do i if"
@@ -184,10 +225,10 @@
       "id": 105,
       "side": "right",
       "label": "Path D · Early reflex brush-off",
-      "trigger": "Early \"Not interested\" / \"We are good\"",
-      "raw": "🐢 I'm not surprised, [Prospect Name]—I haven't got to the good bit yet ⬇️. ⏸️ ⚡ Give me 60 seconds to explain why I called, and if you still think it's useless for your business after that, tell me no and I'll hang up myself ⬇️. 🤔 Fair enough?",
+      "trigger": "Look, we're good / not interested. (\"Go ahead\" → Turn 4)",
+      "raw": "\"🐢 I'm not surprised, [Prospect Name]—I haven't got to the good bit yet ⬇️. ⏸️ ⚡ Give me 60 seconds to explain why I called, and if you still think it's useless for your business after that, tell me no and I'll hang up myself ⬇️. 🤔 Fair enough?\"",
       "beats": [
-        "🐢 I'm not surprised, [Prospect Name]—I haven't got to the good bit yet ⬇️. ⏸️ ⚡ Give me 60 seconds to explain why I called, and if you still think it's useless for your business after that, tell me no and I'll hang up myself ⬇️. 🤔 Fair enough?"
+        "\"🐢 I'm not surprised, [Prospect Name]—I haven't got to the good bit yet ⬇️. ⏸️ ⚡ Give me 60 seconds to explain why I called, and if you still think it's useless for your business after that, tell me no and I'll hang up myself ⬇️. 🤔 Fair enough?\""
       ],
       "anchors": [
         "im not surprised i"
@@ -201,10 +242,10 @@
       "id": 106,
       "side": "right",
       "label": "Path C · Where did you get my number?",
-      "trigger": "Where did you get my number?",
-      "raw": "🐢 Our research team pulls numbers from public Danish registries ⬇️. ⏸️ ⚡ But we're very exclusive in the criteria we look for ⬇️. 🐢 We only reach out to established firms with roughly 4 to 8 staff and a solid local reputation—which I'm assuming applies to you guys 🤔?",
+      "trigger": "Where did you get this number from? (\"Yeah, that's us\" → Turn 4)",
+      "raw": "\"🐢 Our research team pulls numbers from public Danish registries ⬇️. ⏸️ ⚡ But we're very exclusive in the criteria we look for ⬇️. 🐢 We only reach out to established firms with roughly 4 to 8 staff and a solid local reputation—which I'm assuming applies to you guys 🤔?\"",
       "beats": [
-        "🐢 Our research team pulls numbers from public Danish registries ⬇️. ⏸️ ⚡ But we're very exclusive in the criteria we look for ⬇️. 🐢 We only reach out to established firms with roughly 4 to 8 staff and a solid local reputation—which I'm assuming applies to you guys 🤔?"
+        "\"🐢 Our research team pulls numbers from public Danish registries ⬇️. ⏸️ ⚡ But we're very exclusive in the criteria we look for ⬇️. 🐢 We only reach out to established firms with roughly 4 to 8 staff and a solid local reputation—which I'm assuming applies to you guys 🤔?\""
       ],
       "anchors": [
         "our research team pulls"
@@ -219,9 +260,9 @@
       "side": "right",
       "label": "Send me an email first",
       "trigger": "Just send me an email with some info.",
-      "raw": "🐢 For sure, I can email you ⬇️. ⏸️ ⚡ But the reason we do the 10-minute look first is we only implement AI in a business if it can actually generate meaningful results—and the missed-call setup I told you about is only one of the things ⬇️. ⏸️ 🐢 So I'm not sure what to send you on email without it being irrelevant to you, and that's why we have that 10-minute call first—so we can see all the possible gaps in the business ⬇️. ⏸️ 🤔 So what do you say—should we grab 10 minutes tomorrow afternoon, or is Thursday morning better ⬇️?",
+      "raw": "\"🐢 For sure, I can email you ⬇️. ⏸️ ⚡ But the reason we do the 10-minute look first is we only implement AI in a business if it can actually generate meaningful results—and the missed-call setup I told you about is only one of the things ⬇️. ⏸️ 🐢 So I'm not sure what to send you on email without it being irrelevant to you, and that's why we have that 10-minute call first—so we can see all the possible gaps in the business ⬇️. ⏸️ 🤔 So what do you say—should we grab 10 minutes tomorrow at 15:30, or later this week at 15:30 ⬇️?\"",
       "beats": [
-        "🐢 For sure, I can email you ⬇️. ⏸️ ⚡ But the reason we do the 10-minute look first is we only implement AI in a business if it can actually generate meaningful results—and the missed-call setup I told you about is only one of the things ⬇️. ⏸️ 🐢 So I'm not sure what to send you on email without it being irrelevant to you, and that's why we have that 10-minute call first—so we can see all the possible gaps in the business ⬇️. ⏸️ 🤔 So what do you say—should we grab 10 minutes tomorrow afternoon, or is Thursday morning better ⬇️?"
+        "\"🐢 For sure, I can email you ⬇️. ⏸️ ⚡ But the reason we do the 10-minute look first is we only implement AI in a business if it can actually generate meaningful results—and the missed-call setup I told you about is only one of the things ⬇️. ⏸️ 🐢 So I'm not sure what to send you on email without it being irrelevant to you, and that's why we have that 10-minute call first—so we can see all the possible gaps in the business ⬇️. ⏸️ 🤔 So what do you say—should we grab 10 minutes tomorrow at 15:30, or later this week at 15:30 ⬇️?\""
       ],
       "anchors": [
         "for sure i can"
@@ -237,9 +278,9 @@
       "side": "left",
       "label": "Already have a web / tech guy",
       "trigger": "We already have a web / tech guy",
-      "raw": "🐢 Good to hear ⬇️. 🤔 What are they handling right now—just the website, or site call intake too 🤔?",
+      "raw": "\"🐢 Good to hear ⬇️. 🤔 What are they handling right now—just the website, or site call intake too 🤔?\"",
       "beats": [
-        "🐢 Good to hear ⬇️. 🤔 What are they handling right now—just the website, or site call intake too 🤔?"
+        "\"🐢 Good to hear ⬇️. 🤔 What are they handling right now—just the website, or site call intake too 🤔?\""
       ],
       "anchors": [
         "good to hear what"
@@ -254,9 +295,9 @@
       "side": "left",
       "label": "We don't replace your web guy",
       "trigger": "Follow-up to the web / tech guy objection",
-      "raw": "🐢 Got it. We don't replace your web guy ⬇️. And since the 10-minute look is free, it costs you nothing—after 10 minutes, you'll have a crystal-clear picture of whether there's a leak or if your current setup is airtight ⬇️. Is tomorrow afternoon or Thursday morning better ⬇️?",
+      "raw": "\"🐢 Got it. We don't replace your web guy ⬇️. And since the 10-minute look is free, it costs you nothing—after 10 minutes, you'll have a crystal-clear picture of whether there's a leak or if your current setup is airtight ⬇️. Is tomorrow at 15:30 or later this week at 15:30 better ⬇️?\"",
       "beats": [
-        "🐢 Got it. We don't replace your web guy ⬇️. And since the 10-minute look is free, it costs you nothing—after 10 minutes, you'll have a crystal-clear picture of whether there's a leak or if your current setup is airtight ⬇️. Is tomorrow afternoon or Thursday morning better ⬇️?"
+        "\"🐢 Got it. We don't replace your web guy ⬇️. And since the 10-minute look is free, it costs you nothing—after 10 minutes, you'll have a crystal-clear picture of whether there's a leak or if your current setup is airtight ⬇️. Is tomorrow at 15:30 or later this week at 15:30 better ⬇️?\""
       ],
       "anchors": [
         "got it we dont"
@@ -269,12 +310,16 @@
       "side": "right",
       "label": "We don't use AI",
       "trigger": "We don't use AI / We are old-school",
-      "raw": "🐢 Well, using AI sounds unnecessary and fancy until you actually see how much evening time it saves you per week, or how it directly stops high-ticket calls from slipping to competitors ⬇️. See, the thing is, there could be a lot to go over—and that's the exact reason we do the 10-minute review, so we can see all the possible gaps in your business without you committing to anything ⬇️. Does tomorrow afternoon or Thursday morning work better to at least see what's possible in your case ⬇️?",
+      "raw": "\"🐢 Well, using AI sounds unnecessary and fancy until you actually see how much evening time it saves you per week, or how it directly stops high-ticket calls from slipping to competitors ⬇️.\n\nSee, the thing is, there could be a lot to go over—and that's the exact reason we do the 10-minute review, so we can see all the possible gaps in your business without you committing to anything ⬇️.\n\nDoes tomorrow at 15:30 or later this week at 15:30 work better to at least see what's possible in your case ⬇️?\"",
       "beats": [
-        "🐢 Well, using AI sounds unnecessary and fancy until you actually see how much evening time it saves you per week, or how it directly stops high-ticket calls from slipping to competitors ⬇️. See, the thing is, there could be a lot to go over—and that's the exact reason we do the 10-minute review, so we can see all the possible gaps in your business without you committing to anything ⬇️. Does tomorrow afternoon or Thursday morning work better to at least see what's possible in your case ⬇️?"
+        "\"🐢 Well, using AI sounds unnecessary and fancy until you actually see how much evening time it saves you per week, or how it directly stops high-ticket calls from slipping to competitors ⬇️.",
+        "See, the thing is, there could be a lot to go over—and that's the exact reason we do the 10-minute review, so we can see all the possible gaps in your business without you committing to anything ⬇️.",
+        "Does tomorrow at 15:30 or later this week at 15:30 work better to at least see what's possible in your case ⬇️?\""
       ],
       "anchors": [
-        "well using ai sounds"
+        "well using ai sounds",
+        "see the thing is",
+        "does tomorrow at 15"
       ],
       "objectionAnchors": [
         "well using ai",
@@ -287,12 +332,14 @@
       "side": "right",
       "label": "Why is it free? / What's the catch?",
       "trigger": "Why are you doing this for free? What's the catch?",
-      "raw": "🐢 Because we know 80% of established firms will adopt AI automation in the next 8 to 12 months ⬇️. ⏸️ 🐢 So we are building relationships and giving upfront value now, so if or when the time comes that you *do* want to plug those leaks, you've already got us as a trusted contact ⬇️. ⏸️ Sounds fair 🤔? Does tomorrow afternoon or Thursday morning work better for a quick look ⬇️?",
+      "raw": "\"🐢 Because we know 80% of established firms will adopt AI automation in the next 8 to 12 months ⬇️. ⏸️ 🐢 So we are building relationships and giving upfront value now, so if or when the time comes that you *do* want to plug those leaks, you've already got us as a trusted contact ⬇️. ⏸️ Sounds fair 🤔?\n\nDoes tomorrow at 15:30 or later this week at 15:30 work better for a quick look ⬇️?\"",
       "beats": [
-        "🐢 Because we know 80% of established firms will adopt AI automation in the next 8 to 12 months ⬇️. ⏸️ 🐢 So we are building relationships and giving upfront value now, so if or when the time comes that you *do* want to plug those leaks, you've already got us as a trusted contact ⬇️. ⏸️ Sounds fair 🤔? Does tomorrow afternoon or Thursday morning work better for a quick look ⬇️?"
+        "\"🐢 Because we know 80% of established firms will adopt AI automation in the next 8 to 12 months ⬇️. ⏸️ 🐢 So we are building relationships and giving upfront value now, so if or when the time comes that you *do* want to plug those leaks, you've already got us as a trusted contact ⬇️. ⏸️ Sounds fair 🤔?",
+        "Does tomorrow at 15:30 or later this week at 15:30 work better for a quick look ⬇️?\""
       ],
       "anchors": [
-        "because we know 80"
+        "because we know 80",
+        "does tomorrow at 15"
       ],
       "objectionAnchors": [
         "because we know 80"
@@ -304,9 +351,9 @@
       "side": "left",
       "label": "Booked out / plenty of work",
       "trigger": "We're not interested / We're already booked out",
-      "raw": "🐢 The issue when you're slammed isn't getting *more* work—it's missing out on cherry-picking the highest-margin 200,000 DKK jobs while wasting your evenings quoting tire-kickers ⬇️. That's why we should connect for 10 minutes so you can get your evenings back—is tomorrow or Thursday better ⬇️?",
+      "raw": "\"🐢 The issue when you're slammed isn't getting *more* work—it's missing out on cherry-picking the highest-margin 200,000 DKK jobs while wasting your evenings quoting tire-kickers ⬇️. That's why we should connect for 10 minutes so you can get your evenings back—is tomorrow at 15:30 or later this week at 15:30 better ⬇️?\"",
       "beats": [
-        "🐢 The issue when you're slammed isn't getting *more* work—it's missing out on cherry-picking the highest-margin 200,000 DKK jobs while wasting your evenings quoting tire-kickers ⬇️. That's why we should connect for 10 minutes so you can get your evenings back—is tomorrow or Thursday better ⬇️?"
+        "\"🐢 The issue when you're slammed isn't getting *more* work—it's missing out on cherry-picking the highest-margin 200,000 DKK jobs while wasting your evenings quoting tire-kickers ⬇️. That's why we should connect for 10 minutes so you can get your evenings back—is tomorrow at 15:30 or later this week at 15:30 better ⬇️?\""
       ],
       "anchors": [
         "the issue when youre"
@@ -322,9 +369,9 @@
       "side": "left",
       "label": "General \"Not interested\" after the speech",
       "trigger": "If they say general \"Not interested\" after the speech",
-      "raw": "🐢 I understand your concern ⬇️. Just before I go, is it that you think AI is not implementable in a trade business, or did I not quite explain how we plug the missed calls 🤔?",
+      "raw": "\"🐢 I understand your concern ⬇️. Just before I go, is it that you think AI is not implementable in a trade business, or did I not quite explain how we plug the missed calls 🤔?\"",
       "beats": [
-        "🐢 I understand your concern ⬇️. Just before I go, is it that you think AI is not implementable in a trade business, or did I not quite explain how we plug the missed calls 🤔?"
+        "\"🐢 I understand your concern ⬇️. Just before I go, is it that you think AI is not implementable in a trade business, or did I not quite explain how we plug the missed calls 🤔?\""
       ],
       "anchors": [
         "i understand your concern"
@@ -332,16 +379,16 @@
       "objectionAnchors": [
         "i understand your concern"
       ],
-      "next": 5
+      "next": 114
     },
     {
       "id": 114,
       "side": "left",
       "label": "Follow-up once they answer",
       "trigger": "Follow-up response once they answer",
-      "raw": "🐢 Well, it depends on where your company is at right now—because it's possible you guys don't even need it ⬇️. And that's the exact reason we do the 10-minute look in the first place, with practical, low-cost automation that drives revenue forward without any fancy fluff ⬇️. How's Thursday morning for a quick 10-minute look ⬇️?",
+      "raw": "\"🐢 Well, it depends on where your company is at right now—because it's possible you guys don't even need it ⬇️. And that's the exact reason we do the 10-minute look in the first place, with practical, low-cost automation that drives revenue forward without any fancy fluff ⬇️. How's tomorrow at 15:30 for a quick 10-minute look ⬇️?\"",
       "beats": [
-        "🐢 Well, it depends on where your company is at right now—because it's possible you guys don't even need it ⬇️. And that's the exact reason we do the 10-minute look in the first place, with practical, low-cost automation that drives revenue forward without any fancy fluff ⬇️. How's Thursday morning for a quick 10-minute look ⬇️?"
+        "\"🐢 Well, it depends on where your company is at right now—because it's possible you guys don't even need it ⬇️. And that's the exact reason we do the 10-minute look in the first place, with practical, low-cost automation that drives revenue forward without any fancy fluff ⬇️. How's tomorrow at 15:30 for a quick 10-minute look ⬇️?\""
       ],
       "anchors": [
         "well it depends on"

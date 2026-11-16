@@ -20,13 +20,13 @@ describe("the fixture is the verbatim Scalix flowchart", () => {
       "Turn 1", "Turn 2", "Turn 3", "Turn 4", "Turn 5", "Turn 6", "Turn 7",
     ]);
     expect(FLOW.center.map((line) => line.label)).toEqual([
-      "Opening & Job Site check",
-      "On-Site check",
+      "Opening",
+      "On-Site / Tools Running",
       "The Hook & Assumption",
       "The Leak & The Offer",
       "Lock the time",
-      "Confirm the email",
-      "Spell back & sign off",
+      "Get the email",
+      "Spell back and sign off",
     ]);
   });
 
@@ -54,7 +54,7 @@ describe("the fixture is the verbatim Scalix flowchart", () => {
 
     expect(turn(1)).toContain("[Prospect Name], hi. It's Gagan from Scalix Elite");
     expect(turn(4)).toContain("40,000 to 80,000 DKK");
-    expect(turn(6)).toContain("[firstname]@[company domain].dk");
+    expect(turn(6)).toContain("[time] it is");
     expect(turn(7)).toContain("[spell back email address slowly]");
     expect(branch("Path B · Don't take cold calls")).toContain(
       "Neither do I, [Prospect Name], if I can possibly avoid it"
@@ -83,7 +83,7 @@ describe("Tier 0 - rep-first objection openers", () => {
     ["Well using AI", 110],
     ["The issue when you're slammed", 112],
     ["Because we know 80", 111],
-    ["Understood when do you", 2],
+    ["Understood I won't waste", 2],
   ];
 
   for (const [opener, expected] of openers) {
@@ -154,8 +154,8 @@ describe("sequence: after a paragraph, the next turn", () => {
   it("walks Turn 4 to 5 to 6 to 7 on their opening words", () => {
     const t = tracker(3);
     expect(t.observe("got it, yeah, so the reason for the call")).toBe(4);
-    expect(t.observe("awesome. when are you naturally more free")).toBe(5);
-    expect(t.observe("perfect, 15:30 it is")).toBe(6);
+    expect(t.observe("before committing to anything")).toBe(5);
+    expect(t.observe("perfect it is whats your best")).toBe(6);
     expect(t.observe("got it, that's right")).toBe(7);
   });
 
@@ -250,7 +250,7 @@ describe("stale matches expire", () => {
   it("lets a newer turn outrank an older objection", () => {
     const t = tracker(4);
     expect(t.observe("our research team")).toBe(106);
-    expect(t.observe("awesome when are you naturally more free")).toBe(5);
+    expect(t.observe("awesome im assuming youre")).toBe(5);
   });
 
   it("does not re-decide an objection that is already behind us", () => {
@@ -328,13 +328,13 @@ describe("utterances arbitrate between tiers", () => {
   it("releases the objection card when the rep speaks a line again", () => {
     const t = tracker(7);
     expect(t.observe("neither do i")).toBe(104);
-    expect(t.observe("awesome when are you")).toBe(5);
+    expect(t.observe("before committing to anything")).toBe(5);
   });
 
   it("lets a newer line beat an opener from the previous utterance", () => {
     // The rep answered an objection, then moved on: the HUD must follow the new line.
     const t = tracker(7);
     expect(t.observe("neither do i")).toBe(104);
-    expect(t.observe("to be precise would")).toBe(5);
+    expect(t.observe("awesome im assuming youre")).toBe(5);
   });
 });

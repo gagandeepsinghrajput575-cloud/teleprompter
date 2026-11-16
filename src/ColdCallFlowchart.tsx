@@ -54,22 +54,23 @@ function buildDefaultPositions(allCards: FlowCard[]): Record<number, NodePositio
   const branchMap: Record<number, { x: number; y: number }> = {
     // Row 1
     101: { x: leftX, y: 40 },
-    102: { x: rightX, y: 40 },
-    103: { x: rightX, y: 170 },
+    102: { x: leftX, y: 200 },
+    103: { x: leftX, y: 340 },
+    115: { x: rightX, y: 40 },
     // Row 2
-    112: { x: leftX, y: 300 },
-    113: { x: rightX, y: 300 },
+    112: { x: leftX, y: 480 },
+    113: { x: leftX, y: 640 },
     // Row 3
-    104: { x: leftX, y: 580 },
-    105: { x: leftX, y: 730 },
-    106: { x: rightX, y: 580 },
+    104: { x: leftX, y: 800 },
+    105: { x: rightX, y: 580 },
+    106: { x: rightX, y: 740 },
     // Row 4
-    107: { x: leftX, y: 900 },
+    107: { x: rightX, y: 900 },
     108: { x: leftX, y: 1060 },
     109: { x: leftX, y: 1220 },
-    110: { x: leftX, y: 1380 },
-    111: { x: rightX, y: 900 },
-    114: { x: rightX, y: 1060 },
+    110: { x: rightX, y: 1060 },
+    111: { x: rightX, y: 1220 },
+    114: { x: leftX, y: 1380 },
   };
 
   for (const card of allCards) {
@@ -102,25 +103,26 @@ function buildDefaultEdges(): FlowEdge[] {
 
     // Row 1 connections
     { id: "e101-1", fromId: 101, fromSlot: "right", toId: 1, toSlot: "left" },
-    { id: "e102-1", fromId: 102, fromSlot: "left", toId: 1, toSlot: "right" },
-    { id: "e103-1", fromId: 103, fromSlot: "left", toId: 1, toSlot: "right" },
+    { id: "e102-103", fromId: 102, fromSlot: "bottom", toId: 103, toSlot: "top" },
+    { id: "e103-3", fromId: 103, fromSlot: "right", toId: 3, toSlot: "left" },
+    { id: "e115-4", fromId: 115, fromSlot: "left", toId: 4, toSlot: "right" },
 
     // Row 2 connections
     { id: "e112-2", fromId: 112, fromSlot: "right", toId: 2, toSlot: "left" },
-    { id: "e113-2", fromId: 113, fromSlot: "left", toId: 2, toSlot: "right" },
+    { id: "e113-114", fromId: 113, fromSlot: "bottom", toId: 114, toSlot: "top" },
+    { id: "e114-5", fromId: 114, fromSlot: "right", toId: 5, toSlot: "left" },
 
     // Row 3 connections
-    { id: "e104-3", fromId: 104, fromSlot: "right", toId: 3, toSlot: "left" },
-    { id: "e105-3", fromId: 105, fromSlot: "right", toId: 3, toSlot: "left" },
-    { id: "e106-3", fromId: 106, fromSlot: "left", toId: 3, toSlot: "right" },
+    { id: "e104-4", fromId: 104, fromSlot: "right", toId: 4, toSlot: "left" },
+    { id: "e105-4", fromId: 105, fromSlot: "left", toId: 4, toSlot: "right" },
+    { id: "e106-4", fromId: 106, fromSlot: "left", toId: 4, toSlot: "right" },
 
     // Row 4 connections
-    { id: "e107-4", fromId: 107, fromSlot: "right", toId: 4, toSlot: "left" },
+    { id: "e107-5", fromId: 107, fromSlot: "left", toId: 5, toSlot: "right" },
     { id: "e108-109", fromId: 108, fromSlot: "bottom", toId: 109, toSlot: "top" },
-    { id: "e109-4", fromId: 109, fromSlot: "right", toId: 4, toSlot: "left" },
-    { id: "e110-4", fromId: 110, fromSlot: "right", toId: 4, toSlot: "left" },
-    { id: "e111-4", fromId: 111, fromSlot: "left", toId: 4, toSlot: "right" },
-    { id: "e114-4", fromId: 114, fromSlot: "left", toId: 4, toSlot: "right" },
+    { id: "e109-5", fromId: 109, fromSlot: "right", toId: 5, toSlot: "left" },
+    { id: "e110-5", fromId: 110, fromSlot: "left", toId: 5, toSlot: "right" },
+    { id: "e111-5", fromId: 111, fromSlot: "left", toId: 5, toSlot: "right" },
   ];
 }
 

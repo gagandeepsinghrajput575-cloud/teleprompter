@@ -1776,7 +1776,7 @@ mod tests {
     #[test]
     fn coldcall_fixture_loads_with_name_and_niche_placeholders() {
         let cold = load_script_by_type("coldcall").unwrap();
-        assert_eq!(cold.lines.len(), 21);
+        assert_eq!(cold.lines.len(), 22);
         assert_eq!(cold.lines[0].id, 1);
         assert!(cold.lines.iter().any(|l| l.body.contains("[Prospect Name]")));
     }

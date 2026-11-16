@@ -296,18 +296,36 @@ export default function ColdCallFlowchart({
     }
   }, [activeId, viewMode]);
 
-  // Canvas Pan handlers
-  const handleCanvasMouseDown = (e: React.MouseEvent) => {
-    // Only pan if clicking canvas background directly
-    if (e.target === canvasRef.current || (e.target as HTMLElement)?.classList.contains("canvas-svg-layer")) {
-      setIsPanning(true);
-      panStartRef.current = {
-        x: e.clientX,
-        y: e.clientY,
-        panX: pan.x,
-        panY: pan.y,
-      };
+  // Canvas Pan & Zoom handlers
+  const handleWheel = (e: React.WheelEvent) => {
+    // If pinch-to-zoom or Ctrl+wheel is detected, adjust zoom
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const zoomDelta = -e.deltaY * 0.002;
+      setZoom((z) => Math.min(2.0, Math.max(0.3, parseFloat((z + zoomDelta).toFixed(2)))));
+    } else {
+      // Normal mouse wheel or 2-finger trackpad swipe pans the canvas!
+      e.preventDefault();
+      setPan((p) => ({
+        x: p.x - e.deltaX,
+        y: p.y - e.deltaY,
+      }));
     }
+  };
+
+  const handleCanvasMouseDown = (e: React.MouseEvent) => {
+    // Allow panning unless clicking directly on an interactive control (card, button, input, slot)
+    const target = e.target as HTMLElement;
+    if (target.closest(".flow-card, .flow-btn, .slot-port, button, input, textarea, select")) {
+      return;
+    }
+    setIsPanning(true);
+    panStartRef.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panX: pan.x,
+      panY: pan.y,
+    };
   };
 
   const handleMouseMove = (e: React.MouseEvent) => {
@@ -604,14 +622,27 @@ export default function ColdCallFlowchart({
 
           {/* 🔄 Reset Layout button */}
           {viewMode === "canvas" && (
-            <button
-              type="button"
-              className="flow-btn"
-              onClick={resetLayout}
-              title="Auto-arrange blocks into default layout"
-            >
-              🔄 Auto-Arrange
-            </button>
+            <>
+              <button
+                type="button"
+                className="flow-btn"
+                onClick={resetLayout}
+                title="Auto-arrange blocks into default layout"
+              >
+                🔄 Auto-Arrange
+              </button>
+              <button
+                type="button"
+                className="flow-btn"
+                onClick={() => {
+                  setPan({ x: 40, y: 30 });
+                  setZoom(1);
+                }}
+                title="Reset scroll and zoom to center"
+              >
+                🎯 Center View
+              </button>
+            </>
           )}
         </div>
 
@@ -677,7 +708,8 @@ export default function ColdCallFlowchart({
           ref={canvasRef}
           className="flow-canvas-viewport"
           onMouseDown={handleCanvasMouseDown}
-          style={{ cursor: isPanning ? "grabbing" : "default" }}
+          onWheel={handleWheel}
+          style={{ cursor: isPanning ? "grabbing" : "grab" }}
         >
           <div
             className="flow-canvas-content"

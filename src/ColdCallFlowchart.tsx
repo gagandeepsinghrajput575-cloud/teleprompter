@@ -382,6 +382,10 @@ export default function ColdCallFlowchart({
 
   // Node drag start
   const startDragNode = (id: number, e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest("button, input, textarea, select, .slot-port, .flow-btn-icon")) {
+      return;
+    }
     e.stopPropagation();
     const current = positions[id] || { x: 0, y: 0 };
     setDraggingNode({
@@ -517,10 +521,11 @@ export default function ColdCallFlowchart({
         ref={register(card.id)}
         className={`flow-card flow-card--${variant} ${isCanvas ? "flow-card--canvas-node" : ""}`}
         data-active={active ? "true" : "false"}
-        style={isCanvas ? { transform: `translate3d(${pos.x}px, ${pos.y}px, 0)` } : undefined}
+        style={isCanvas ? { transform: `translate3d(${pos.x}px, ${pos.y}px, 0)`, cursor: "grab" } : undefined}
         role="button"
         tabIndex={0}
         aria-current={active ? "step" : undefined}
+        onMouseDown={isCanvas ? (e) => startDragNode(card.id, e) : undefined}
         onClick={() => onJump(card.id)}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {

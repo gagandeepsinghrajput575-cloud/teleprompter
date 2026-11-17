@@ -1053,23 +1053,31 @@ fn script_lines(state: tauri::State<'_, AppState>) -> Vec<tracker::ScriptLine> {
     state.tracker.lock().unwrap().lines().to_vec()
 }
 
-#[tauri::command]
-fn select_script(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
-    call_type: String,
+pub fn do_select_script(
+    app: &tauri::AppHandle,
+    tracker_mutex: &Arc<Mutex<Tracker>>,
+    call_type: &str,
 ) -> Result<Vec<tracker::ScriptLine>, String> {
-    let script = tracker::load_script_by_type(&call_type)?;
+    let script = tracker::load_script_by_type(call_type)?;
     let lines = script.lines.clone();
-    let id = state.tracker.lock().unwrap().switch_script(lines.clone());
-    emit_active(&app, &state.tracker, id, "script-select");
-    let _ = app.emit("script_selected", &call_type);
+    let id = tracker_mutex.lock().unwrap().switch_script(lines.clone());
+    emit_active(app, tracker_mutex, id, "script-select");
+    let _ = app.emit("script_selected", call_type);
     println!(
         "SCRIPT_SWITCHED to '{}' lines={}",
         script.title,
         lines.len()
     );
     Ok(lines)
+}
+
+#[tauri::command]
+fn select_script(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    call_type: String,
+) -> Result<Vec<tracker::ScriptLine>, String> {
+    do_select_script(&app, &state.tracker, &call_type)
 }
 
 fn toggle_visibility(app: &tauri::AppHandle) {
@@ -1439,6 +1447,11 @@ pub fn run() {
                     .expect("http client"),
             });
 
+            if let Ok(st) = std::env::var("STEALTH_SCRIPT") {
+                let state = app.state::<AppState>();
+                let _ = do_select_script(&app.handle(), &state.tracker, &st);
+            }
+
             // Restore the last placement. `center: true` used to live in tauri.conf.json and
             // silently overrode this, and macOS also repositions the window when it is first
             // shown — so the position is re-applied just after the window appears.
@@ -1451,7 +1464,27 @@ pub fn run() {
                     std::thread::sleep(Duration::from_millis(500));
                     if let Some(win) = handle.get_webview_window("hud") {
                         if let Some(geo) = read_geometry(&handle) {
-                            let _ = win.set_position(tauri::PhysicalPosition::new(geo.x, geo.y));
+                            let is_on_any_monitor = win.available_monitors().ok().map(|monitors| {
+                                monitors.iter().any(|m| {
+                                    let mx = m.position().x;
+                                    let my = m.position().y;
+                                    let mw = m.size().width as i32;
+                                    let mh = m.size().height as i32;
+                                    let overlap_w = (geo.x + geo.width as i32).min(mx + mw) - geo.x.max(mx);
+                                    let overlap_h = (geo.y + geo.height as i32).min(my + mh) - geo.y.max(my);
+                                    overlap_w >= 100 && overlap_h >= 100
+                                })
+                            }).unwrap_or(false);
+
+                            if is_on_any_monitor {
+                                let _ = win.set_position(tauri::PhysicalPosition::new(geo.x, geo.y));
+                            } else {
+                                eprintln!(
+                                    "WINDOW_OFFSCREEN wanted=({},{}) -> centering on visible monitor",
+                                    geo.x, geo.y
+                                );
+                                let _ = win.center();
+                            }
                             // set_position is dispatched to the main thread, so the value is
                             // not readable immediately; let it settle before measuring.
                             std::thread::sleep(Duration::from_millis(400));
@@ -1666,11 +1699,28 @@ pub fn run() {
                     None::<&str>,
                 )?;
                 let show = MenuItem::with_id(app, "show", "Show / Hide HUD", true, None::<&str>)?;
+                let center = MenuItem::with_id(app, "center", "Center Window on Screen", true, None::<&str>)?;
+                let script_call1 = MenuItem::with_id(app, "script_call1", "Script: Call 1 (10-Min Audit)", true, None::<&str>)?;
+                let script_call2 = MenuItem::with_id(app, "script_call2", "Script: Call 2 (Presentation & Close)", true, None::<&str>)?;
+                let script_coldcall = MenuItem::with_id(app, "script_coldcall", "Script: Cold Call (Scalix Elite)", true, None::<&str>)?;
                 let nudge_up = MenuItem::with_id(app, "up", "Previous line", true, None::<&str>)?;
                 let nudge_down = MenuItem::with_id(app, "down", "Next line", true, None::<&str>)?;
                 let quit =
                     MenuItem::with_id(app, "quit", "Quit StealthPrompter", true, None::<&str>)?;
-                let menu = Menu::with_items(app, &[&edit, &show, &nudge_up, &nudge_down, &quit])?;
+                let menu = Menu::with_items(
+                    app,
+                    &[
+                        &edit,
+                        &show,
+                        &center,
+                        &script_call1,
+                        &script_call2,
+                        &script_coldcall,
+                        &nudge_up,
+                        &nudge_down,
+                        &quit,
+                    ],
+                )?;
 
                 let tray = TrayIconBuilder::with_id("main")
                     .icon(app.default_window_icon().expect("app icon").clone())
@@ -1680,6 +1730,25 @@ pub fn run() {
                     .on_menu_event(|app, event| match event.id.as_ref() {
                         "edit" => toggle_edit_mode(app),
                         "show" => toggle_visibility(app),
+                        "center" => {
+                            if let Some(win) = app.get_webview_window("hud") {
+                                let _ = win.center();
+                                let _ = win.show();
+                                let _ = win.set_focus();
+                            }
+                        }
+                        "script_call1" => {
+                            let state = app.state::<AppState>();
+                            let _ = do_select_script(app, &state.tracker, "call1");
+                        }
+                        "script_call2" => {
+                            let state = app.state::<AppState>();
+                            let _ = do_select_script(app, &state.tracker, "call2");
+                        }
+                        "script_coldcall" => {
+                            let state = app.state::<AppState>();
+                            let _ = do_select_script(app, &state.tracker, "coldcall");
+                        }
                         "up" => nudge_from_hotkey(app, -1),
                         "down" => nudge_from_hotkey(app, 1),
                         "quit" => app.exit(0),

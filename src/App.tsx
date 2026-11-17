@@ -88,16 +88,35 @@ const setStorage = (key: string, value: string): void => {
 
 export default function App() {
   const [selectedCall, setSelectedCall] = useState<"call1" | "call2" | "coldcall" | null>(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      const q = sp.get("script") || sp.get("call");
+      if (q === "call1" || q === "call2" || q === "coldcall") return q;
+    }
     const saved = getStorage("tp.selectedCall");
     return (saved as "call1" | "call2" | "coldcall") || "coldcall";
   });
   const [script, setScript] = useState<Script>(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      const q = sp.get("script") || sp.get("call");
+      if (q === "call1") return call1Script;
+      if (q === "call2") return call2Script;
+      if (q === "coldcall") return coldCallScript;
+    }
     const saved = getStorage("tp.selectedCall");
     if (saved === "call1") return call1Script;
     if (saved === "call2") return call2Script;
     return coldCallScript;
   });
   const [activeId, setActiveId] = useState(() => {
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      const q = sp.get("script") || sp.get("call");
+      if (q === "call1") return call1Script.lines[0]?.id ?? 1;
+      if (q === "call2") return call2Script.lines[0]?.id ?? 1;
+      if (q === "coldcall") return coldCallScript.lines[0]?.id ?? 1;
+    }
     const saved = getStorage("tp.selectedCall");
     if (saved === "call1") return call1Script.lines[0]?.id ?? 1;
     if (saved === "call2") return call2Script.lines[0]?.id ?? 1;
@@ -242,6 +261,17 @@ export default function App() {
       }
     };
     const un = listen<Inbound>("call_context", (e) => apply(e.payload));
+    const unScript = listen<string>("script_selected", (e) => {
+      const type = e.payload as "call1" | "call2" | "coldcall";
+      if (type === "call1" || type === "call2" || type === "coldcall") {
+        const chosen =
+          type === "call2" ? call2Script : type === "coldcall" ? coldCallScript : call1Script;
+        setSelectedCall(type);
+        setStorage("tp.selectedCall", type);
+        setScript(chosen);
+        setActiveId(chosen.lines[0]?.id ?? 1);
+      }
+    });
     // Poll briefly: a push that lands while the webview is still booting would otherwise be
     // missed by both the event (not subscribed yet) and the one-shot fetch (nothing stored yet).
     let stopped = false;
@@ -261,6 +291,7 @@ export default function App() {
       stopped = true;
       window.clearTimeout(timer);
       un.then((off) => off());
+      unScript.then((off) => off());
     };
   }, []);
 

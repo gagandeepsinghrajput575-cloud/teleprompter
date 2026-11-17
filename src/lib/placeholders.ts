@@ -29,6 +29,8 @@ export function fillName(
   const cleanEmployees = employees?.trim();
   if (cleanEmployees) {
     out = out.replace(EMPLOYEES_PLACEHOLDER, () => cleanEmployees);
+  } else {
+    out = out.replace(EMPLOYEES_PLACEHOLDER, () => "4 to 8");
   }
   return out;
 }

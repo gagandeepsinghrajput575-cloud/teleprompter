@@ -1087,6 +1087,8 @@ impl Tracker {
             "Denmark",
             "Danish",
             "DKK",
+            "residential",
+            "construction",
             "remodeler",
             "remodeling",
             "audit",
@@ -1262,7 +1264,7 @@ pub async fn classify_with_llm(
 
             let system_prompt = format!("\
 You are the real-time AI sales copilot tracking a live, high-stakes sales conversation for Scalix Elite. \
-The salesperson (Gagan from Scalix) is pitching high-ticket inbound growth infrastructure, speed-to-lead automation systems, and qualified booked appointments to business owners (roofing, remodeling, and home services contractors). \
+The salesperson (Gagan from Scalix) is pitching high-ticket inbound growth infrastructure, speed-to-lead automation systems, and qualified booked appointments to business owners (residential construction, remodeling, roofing, and home services contractors). \
 \
 Call Methodologies: \
 - Cold Call: Permission opener ('Gagan from Scalix... did I catch you in the middle of a job?'), establishing the core problem (slow response time, losing high-margin jobs, shared lead waste), pitching the 10-minute diagnostic audit, and securing the time. \
@@ -1809,7 +1811,7 @@ mod tests {
 
         // Line 3: The Hook & Assumption
         t.reanchor();
-        t.push_text("we work with established remodeling firms across Denmark core crew roughly 4 to 8 people");
+        t.push_text("reaching out because we work with residential construction firms across Denmark not calling to sell leads or pitch generic marketing roughly people");
         let (id3, confident3, _) = t.local_match().expect("should match line 3");
         assert_eq!(id3, 3);
         assert!(confident3);

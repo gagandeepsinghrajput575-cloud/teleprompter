@@ -2,7 +2,7 @@
   "id": "scalix-cold-call-v1",
   "title": "Scalix Elite · Live Call Flowchart",
   "version": 2,
-  "audience": "established remodeling firms, Denmark",
+  "audience": "established residential construction firms, Denmark",
   "notes": "Verbatim copy of the Scalix Elite live call script provided by user.",
   "center": [
     {
@@ -46,9 +46,9 @@
       "turn": "Turn 3",
       "label": "The Hook & Assumption",
       "trigger": "• If 4–8: \"Got it.\" → Turn 4\n• If 2–3: \"Got it, so you're on tools yourself all day.\" → Turn 4\n• If 10+: \"Got it, so you're even busier than I thought.\" → Turn 4",
-      "raw": "🐢 Good ⬇️. ⏸️ ⚡ I'm reaching out, [Prospect Name], because we work with remodeling firms across Denmark—⏸️ Btw, I am not calling to sell leads or pitch generic marketing ⬇️. ⏸️ I'm assuming you guys run a team of roughly 4 to 8 people right now 🤔?",
+      "raw": "🐢 Good ⬇️. ⏸️ ⚡ I'm reaching out, [Prospect Name], because we work with residential construction firms across Denmark—⏸️ Btw, I am not calling to sell leads or pitch generic marketing ⬇️. ⏸️ I'm assuming you guys run a team of roughly [team size] people right now 🤔?",
       "beats": [
-        "🐢 Good ⬇️. ⏸️ ⚡ I'm reaching out, [Prospect Name], because we work with remodeling firms across Denmark—⏸️ Btw, I am not calling to sell leads or pitch generic marketing ⬇️. ⏸️ I'm assuming you guys run a team of roughly 4 to 8 people right now 🤔?"
+        "🐢 Good ⬇️. ⏸️ ⚡ I'm reaching out, [Prospect Name], because we work with residential construction firms across Denmark—⏸️ Btw, I am not calling to sell leads or pitch generic marketing ⬇️. ⏸️ I'm assuming you guys run a team of roughly [team size] people right now 🤔?"
       ],
       "anchors": [
         "good im reaching out"
@@ -189,9 +189,9 @@
       "side": "right",
       "label": "Objection · What is this about?",
       "trigger": "\"What is this about?\" / \"Who is this regarding?\"",
-      "raw": "\"⚡ Fair enough, [Prospect Name]—I'll be straight with you ⬇️. We build call systems for remodeling firms across Denmark that catch missed calls, filter inquiries, and book jobs while your crew is on tools ⬇️. ⏸️ 🐢 At your crew size, most firms lose 40,000 to 80,000 DKK every month when project calls hit voicemail—and that's actually just one of the leaks draining time and revenue ⬇️. ⏸️ So we take a quick 10-minute look at how you currently run things to find those hidden gaps and map out a plan to implement the fixes ⬇️. [Prospect Name], are you with me 🤔?\"\n\n\"[Prospect Name], before committing to anything, 🐢 I'm just looking to find 10 minutes either tomorrow or sometime later this week, just so we can see what that 10-minute look would look like for you ⬇️.\"",
+      "raw": "\"⚡ Fair enough, [Prospect Name]—I'll be straight with you ⬇️. We build call systems for residential construction firms across Denmark that catch missed calls, filter inquiries, and book jobs while your crew is on tools ⬇️. ⏸️ 🐢 At your crew size, most firms lose 40,000 to 80,000 DKK every month when project calls hit voicemail—and that's actually just one of the leaks draining time and revenue ⬇️. ⏸️ So we take a quick 10-minute look at how you currently run things to find those hidden gaps and map out a plan to implement the fixes ⬇️. [Prospect Name], are you with me 🤔?\"\n\n\"[Prospect Name], before committing to anything, 🐢 I'm just looking to find 10 minutes either tomorrow or sometime later this week, just so we can see what that 10-minute look would look like for you ⬇️.\"",
       "beats": [
-        "\"⚡ Fair enough, [Prospect Name]—I'll be straight with you ⬇️. We build call systems for remodeling firms across Denmark that catch missed calls, filter inquiries, and book jobs while your crew is on tools ⬇️. ⏸️ 🐢 At your crew size, most firms lose 40,000 to 80,000 DKK every month when project calls hit voicemail—and that's actually just one of the leaks draining time and revenue ⬇️. ⏸️ So we take a quick 10-minute look at how you currently run things to find those hidden gaps and map out a plan to implement the fixes ⬇️. [Prospect Name], are you with me 🤔?\"",
+        "\"⚡ Fair enough, [Prospect Name]—I'll be straight with you ⬇️. We build call systems for residential construction firms across Denmark that catch missed calls, filter inquiries, and book jobs while your crew is on tools ⬇️. ⏸️ 🐢 At your crew size, most firms lose 40,000 to 80,000 DKK every month when project calls hit voicemail—and that's actually just one of the leaks draining time and revenue ⬇️. ⏸️ So we take a quick 10-minute look at how you currently run things to find those hidden gaps and map out a plan to implement the fixes ⬇️. [Prospect Name], are you with me 🤔?\"",
         "\"[Prospect Name], before committing to anything, 🐢 I'm just looking to find 10 minutes either tomorrow or sometime later this week, just so we can see what that 10-minute look would look like for you ⬇️.\""
       ],
       "anchors": [
@@ -243,9 +243,9 @@
       "side": "right",
       "label": "Path C · Where did you get my number?",
       "trigger": "Where did you get this number from? (\"Yeah, that's us\" → Turn 4)",
-      "raw": "\"🐢 Our research team pulls numbers from public Danish registries ⬇️. ⏸️ ⚡ But we're very exclusive in the criteria we look for ⬇️. 🐢 We only reach out to established firms with roughly 4 to 8 staff and a solid local reputation—which I'm assuming applies to you guys 🤔?\"",
+      "raw": "\"🐢 Our research team pulls numbers from public Danish registries ⬇️. ⏸️ ⚡ But we're very exclusive in the criteria we look for ⬇️. 🐢 We only reach out to established firms with roughly [team size] staff and a solid local reputation—which I'm assuming applies to you guys 🤔?\"",
       "beats": [
-        "\"🐢 Our research team pulls numbers from public Danish registries ⬇️. ⏸️ ⚡ But we're very exclusive in the criteria we look for ⬇️. 🐢 We only reach out to established firms with roughly 4 to 8 staff and a solid local reputation—which I'm assuming applies to you guys 🤔?\""
+        "\"🐢 Our research team pulls numbers from public Danish registries ⬇️. ⏸️ ⚡ But we're very exclusive in the criteria we look for ⬇️. 🐢 We only reach out to established firms with roughly [team size] staff and a solid local reputation—which I'm assuming applies to you guys 🤔?\""
       ],
       "anchors": [
         "our research team pulls"

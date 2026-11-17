@@ -63,4 +63,29 @@ describe("the dialer's name placeholders", () => {
       )
     ).toBe("Thomas, with a team size of 5 guys...");
   });
+
+  it("falls back to '4 to 8' when employees is omitted or empty", () => {
+    expect(
+      fillName(
+        "I'm assuming you guys run a team of roughly [team size] people right now 🤔?",
+        "Mike"
+      )
+    ).toBe("I'm assuming you guys run a team of roughly 4 to 8 people right now 🤔?");
+
+    expect(
+      fillName(
+        "established firms with roughly [No of employees] staff",
+        "Mike",
+        null
+      )
+    ).toBe("established firms with roughly 4 to 8 staff");
+
+    expect(
+      fillName(
+        "crew of [headcount] people",
+        "Mike",
+        "   "
+      )
+    ).toBe("crew of 4 to 8 people");
+  });
 });

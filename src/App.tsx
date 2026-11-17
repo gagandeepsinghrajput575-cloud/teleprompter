@@ -586,6 +586,11 @@ export default function App() {
         /\[\s*(?:no\.?\s*of\s*employees|employees|number\s+of\s+employees|team\s*size|crew\s*size|staff\s*count|headcount)\s*\]/gi,
         () => employees
       );
+    } else {
+      out = out.replace(
+        /\[\s*(?:no\.?\s*of\s*employees|employees|number\s+of\s+employees|team\s*size|crew\s*size|staff\s*count|headcount)\s*\]/gi,
+        () => "4 to 8"
+      );
     }
     const first = name.split(/\s+/)[0] ?? "";
     if (first) out = out.replace(/\[firstname\]/gi, () => first);

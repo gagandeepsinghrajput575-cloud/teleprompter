@@ -7,18 +7,30 @@
  * untouched, or the script stops being a script.
  */
 const NAME_PLACEHOLDER =
-  /\[\s*(?:prospect(?:'s)?\s+name|owner['\u2019]?s\s+first\s+name)\s*\]/gi;
+  /\[\s*(?:prospect(?:'s)?\s+name|owner['\u2019]?s\s+first\s+name|name)\s*\]/gi;
+
+const EMPLOYEES_PLACEHOLDER =
+  /\[\s*(?:no\.?\s*of\s*employees|employees|number\s+of\s+employees|team\s*size|crew\s*size|staff\s*count|headcount)\s*\]/gi;
 
 /**
  * Fills the name placeholders, leaving the text alone when the dialer has not sent a name yet.
- *
- * The replacement is a function so a name is inserted literally: `String.replace` would
- * otherwise treat `$&`, `$1` and friends inside the name as substitution syntax.
+ * Also fills employee/team size placeholders if provided.
  */
-export function fillName(text: string, name: string | null | undefined): string {
-  const clean = name?.trim();
-  if (!clean) return text;
-  return text.replace(NAME_PLACEHOLDER, () => clean);
+export function fillName(
+  text: string,
+  name: string | null | undefined,
+  employees?: string | null | undefined
+): string {
+  let out = text;
+  const cleanName = name?.trim();
+  if (cleanName) {
+    out = out.replace(NAME_PLACEHOLDER, () => cleanName);
+  }
+  const cleanEmployees = employees?.trim();
+  if (cleanEmployees) {
+    out = out.replace(EMPLOYEES_PLACEHOLDER, () => cleanEmployees);
+  }
+  return out;
 }
 
 /** True when the copy still contains an unfilled name placeholder. */

@@ -13,6 +13,8 @@ type Props = {
   onJump: (id: number) => void;
   /** The business owner's name, injected by the dialer. Absent until a call connects. */
   name?: string | null;
+  /** Team / employee count from dialer */
+  employees?: string | null;
   /** Injectable for deterministic tests and screenshots. */
   now?: Date;
 };
@@ -33,6 +35,7 @@ export default function ColdCallFlowchart({
   activeId,
   onJump,
   name = null,
+  employees = null,
   now = new Date(),
 }: Props) {
   const days = appointmentDays(now);
@@ -76,13 +79,13 @@ export default function ColdCallFlowchart({
         </div>
 
         {variant === "branch" && card.trigger && (
-          <div className="flow-trigger">Prospect: “{fillName(card.trigger, name)}”</div>
+          <div className="flow-trigger">Prospect: “{fillName(card.trigger, name, employees)}”</div>
         )}
 
         <div className="flow-copy">
           {card.beats.map((beat, index) => (
             <p key={index} className="flow-beat">
-              {fillName(beat, name)}
+              {fillName(beat, name, employees)}
             </p>
           ))}
         </div>

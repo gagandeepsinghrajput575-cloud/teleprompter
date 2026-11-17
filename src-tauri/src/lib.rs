@@ -1718,10 +1718,13 @@ pub fn run() {
                     .map(|t| t.trim().to_string())
                     .filter(|t| !t.is_empty());
                 match lead::spawn(port, token, move |incoming| {
-                    if let Some(name) = incoming.name.filter(|n| !n.is_empty()) {
-                        let updated = context_server::update_prospect_name(name);
-                        let _ = handle_lead.emit("call_context", &updated);
-                    }
+                    let updated = context_server::update_lead(
+                        incoming.name.filter(|n| !n.is_empty()),
+                        incoming.company.filter(|c| !c.is_empty()),
+                        incoming.niche.filter(|ni| !ni.is_empty()),
+                        incoming.employees.filter(|e| !e.is_empty()),
+                    );
+                    let _ = handle_lead.emit("call_context", &updated);
                 }) {
                     Ok(bound) => println!("LEAD_READY http://127.0.0.1:{bound}/lead"),
                     Err(err) => eprintln!("LEAD_LISTENER_ERROR {err} (dialer intake disabled)"),

@@ -41,6 +41,38 @@ pub struct Lead {
         alias = "firstName"
     )]
     pub name: Option<String>,
+    #[serde(
+        default,
+        alias = "company_name",
+        alias = "companyName",
+        alias = "business",
+        alias = "business_name"
+    )]
+    pub company: Option<String>,
+    #[serde(
+        default,
+        alias = "industry",
+        alias = "trade"
+    )]
+    pub niche: Option<String>,
+    #[serde(
+        default,
+        alias = "employees",
+        alias = "no_of_employees",
+        alias = "no_of_staff",
+        alias = "team_size",
+        alias = "teamSize",
+        alias = "crew_size",
+        alias = "crewSize",
+        alias = "staff_count",
+        alias = "staffCount",
+        alias = "num_employees",
+        alias = "numberOfEmployees",
+        alias = "employee_count",
+        alias = "employeeCount",
+        alias = "headcount"
+    )]
+    pub employees: Option<String>,
 }
 
 /// Cleans a name for display.
@@ -180,9 +212,17 @@ fn handle(mut stream: TcpStream, token: Option<&str>) -> Result<Option<Lead>, St
         respond(&mut stream, 400, r#"{"error":"name is required"}"#);
         return Ok(None);
     }
+    let company = lead.company.as_deref().map(sanitize);
+    let niche = lead.niche.as_deref().map(sanitize);
+    let employees = lead.employees.as_deref().map(sanitize);
 
     respond(&mut stream, 200, r#"{"ok":true}"#);
-    Ok(Some(Lead { name: Some(name) }))
+    Ok(Some(Lead {
+        name: Some(name),
+        company,
+        niche,
+        employees,
+    }))
 }
 
 fn respond(stream: &mut TcpStream, code: u16, body: &str) {

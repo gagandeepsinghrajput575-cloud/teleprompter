@@ -45,4 +45,22 @@ describe("the dialer's name placeholders", () => {
     expect(needsName("[Prospect Name]")).toBe(true);
     expect(needsName("[Prospect Name]")).toBe(true);
   });
+
+  it("substitutes employee count placeholders when provided", () => {
+    expect(
+      fillName(
+        "I'm assuming you run a team of roughly [No of employees] right now?",
+        "Mike",
+        "6 to 8"
+      )
+    ).toBe("I'm assuming you run a team of roughly 6 to 8 right now?");
+
+    expect(
+      fillName(
+        "[Prospect Name], with a team size of [crew size] guys...",
+        "Thomas",
+        "5"
+      )
+    ).toBe("Thomas, with a team size of 5 guys...");
+  });
 });

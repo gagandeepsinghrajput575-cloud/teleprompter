@@ -62,12 +62,50 @@ fn handle_prospect_ws(stream: TcpStream, app: &tauri::AppHandle) {
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CallContext {
-    #[serde(default)]
+    #[serde(
+        default,
+        alias = "owner",
+        alias = "owner_name",
+        alias = "ownerName",
+        alias = "prospect",
+        alias = "prospect_name",
+        alias = "prospectName",
+        alias = "first_name",
+        alias = "firstName"
+    )]
     pub name: String,
-    #[serde(default)]
+    #[serde(
+        default,
+        alias = "company_name",
+        alias = "companyName",
+        alias = "business",
+        alias = "business_name"
+    )]
     pub company: String,
-    #[serde(default)]
+    #[serde(
+        default,
+        alias = "industry",
+        alias = "trade"
+    )]
     pub niche: String,
+    #[serde(
+        default,
+        alias = "employees",
+        alias = "no_of_employees",
+        alias = "no_of_staff",
+        alias = "team_size",
+        alias = "teamSize",
+        alias = "crew_size",
+        alias = "crewSize",
+        alias = "staff_count",
+        alias = "staffCount",
+        alias = "num_employees",
+        alias = "numberOfEmployees",
+        alias = "employee_count",
+        alias = "employeeCount",
+        alias = "headcount"
+    )]
+    pub employees: Option<String>,
     #[serde(default)]
     pub script: Option<String>,
 }
@@ -79,14 +117,35 @@ pub fn current() -> Option<CallContext> {
     CONTEXT.lock().ok().and_then(|slot| slot.clone())
 }
 
-/// Updates just the prospect name (e.g. from lead listener) while retaining any existing company/niche.
-pub fn update_prospect_name(name: String) -> CallContext {
+/// Updates lead details (name, company, niche, employees) while retaining previous values for any omitted field.
+pub fn update_lead(
+    name: Option<String>,
+    company: Option<String>,
+    niche: Option<String>,
+    employees: Option<String>,
+) -> CallContext {
     let mut ctx = CONTEXT.lock().ok().and_then(|s| s.clone()).unwrap_or_default();
-    ctx.name = name;
+    if let Some(n) = name {
+        ctx.name = n;
+    }
+    if let Some(c) = company {
+        ctx.company = c;
+    }
+    if let Some(ni) = niche {
+        ctx.niche = ni;
+    }
+    if let Some(e) = employees {
+        ctx.employees = Some(e);
+    }
     if let Ok(mut slot) = CONTEXT.lock() {
         *slot = Some(ctx.clone());
     }
     ctx
+}
+
+/// Updates just the prospect name (e.g. from lead listener) while retaining any existing company/niche.
+pub fn update_prospect_name(name: String) -> CallContext {
+    update_lead(Some(name), None, None, None)
 }
 
 /// Parses the JSON body of a `/context` request. Pure so it can be unit-tested without sockets.

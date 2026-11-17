@@ -131,21 +131,32 @@ export default function App() {
     return saved !== null ? saved === "true" : true;
   });
   const [bareNote, setBareNote] = useState("");
-  const [prospect, setProspect] = useState<{ name: string; company: string; niche: string }>(() => {
+  const [prospect, setProspect] = useState<{
+    name: string;
+    company: string;
+    niche: string;
+    employees?: string;
+  }>(() => {
     try {
       const raw = getStorage("tp.prospect");
       if (raw) {
-        const parsed = JSON.parse(raw) as Partial<{ name: string; company: string; niche: string }>;
+        const parsed = JSON.parse(raw) as Partial<{
+          name: string;
+          company: string;
+          niche: string;
+          employees?: string;
+        }>;
         return {
           name: parsed.name ?? "",
           company: parsed.company ?? "",
           niche: parsed.niche ?? "",
+          employees: parsed.employees ?? "",
         };
       }
     } catch {
       // ignore malformed storage
     }
-    return { name: "", company: "", niche: "" };
+    return { name: "", company: "", niche: "", employees: "" };
   });
 
   useEffect(() => {
@@ -205,10 +216,21 @@ export default function App() {
   // The local Pulse Dialer pushes the prospect's context over a loopback webhook when a call
   // starts. Fetch once on mount too, in case the push arrived before this listener existed.
   useEffect(() => {
-    type Inbound = { name?: string; company?: string; niche?: string; script?: string | null };
+    type Inbound = {
+      name?: string;
+      company?: string;
+      niche?: string;
+      employees?: string;
+      script?: string | null;
+    };
     const apply = (p: Inbound | null) => {
       if (!p) return;
-      setProspect({ name: p.name ?? "", company: p.company ?? "", niche: p.niche ?? "" });
+      setProspect((prev) => ({
+        name: p.name ?? prev.name,
+        company: p.company ?? prev.company,
+        niche: p.niche ?? prev.niche,
+        employees: p.employees ?? prev.employees ?? "",
+      }));
       if (p.script === "call1" || p.script === "call2" || p.script === "coldcall") {
         const chosen =
           p.script === "call2" ? call2Script : p.script === "coldcall" ? coldCallScript : call1Script;
@@ -551,6 +573,7 @@ export default function App() {
     const name = prospect.name.trim();
     const company = prospect.company.trim();
     const niche = prospect.niche.trim();
+    const employees = (prospect.employees ?? "").trim();
     if (name) {
       out = out.replace(/\[Name\]/gi, () => name);
       out = out.replace(/\[Prospect Name\]/gi, () => name);
@@ -558,6 +581,12 @@ export default function App() {
     }
     if (company) out = out.replace(/\[Company\]/gi, () => company);
     if (niche) out = out.replace(/\[Niche\]/gi, () => niche);
+    if (employees) {
+      out = out.replace(
+        /\[\s*(?:no\.?\s*of\s*employees|employees|number\s+of\s+employees|team\s*size|crew\s*size|staff\s*count|headcount)\s*\]/gi,
+        () => employees
+      );
+    }
     const first = name.split(/\s+/)[0] ?? "";
     if (first) out = out.replace(/\[firstname\]/gi, () => first);
     const domain = company.toLowerCase().replace(/[^a-z0-9]+/g, "");
@@ -667,11 +696,14 @@ export default function App() {
           <div className="call-modal-title">What call are you doing?</div>
           <div className="call-modal-sub">Select your sales call to start listening</div>
 
-          {(prospect.name || prospect.company || prospect.niche) && (
+          {(prospect.name || prospect.company || prospect.niche || prospect.employees) && (
             <div className="context-card">
               {prospect.name && <span className="ctx-name">{prospect.name}</span>}
               {prospect.company && <span>{prospect.company}</span>}
               {prospect.niche && <span className="ctx-niche">{prospect.niche}</span>}
+              {prospect.employees && (
+                <span className="ctx-employees">👥 {prospect.employees} staff</span>
+              )}
             </div>
           )}
 
@@ -693,6 +725,12 @@ export default function App() {
               placeholder="Niche"
               value={prospect.niche}
               onChange={(e) => setProspect({ ...prospect, niche: e.target.value })}
+            />
+            <input
+              className="picker"
+              placeholder="Employees / team size"
+              value={prospect.employees ?? ""}
+              onChange={(e) => setProspect({ ...prospect, employees: e.target.value })}
             />
           </div>
 
@@ -813,11 +851,14 @@ export default function App() {
             </button>
           </div>
 
-          {(prospect.name || prospect.company || prospect.niche) && (
+          {(prospect.name || prospect.company || prospect.niche || prospect.employees) && (
             <div className="context-card">
               {prospect.name && <span className="ctx-name">{prospect.name}</span>}
               {prospect.company && <span>{prospect.company}</span>}
               {prospect.niche && <span className="ctx-niche">{prospect.niche}</span>}
+              {prospect.employees && (
+                <span className="ctx-employees">👥 {prospect.employees} staff</span>
+              )}
             </div>
           )}
 
@@ -892,6 +933,7 @@ export default function App() {
                 invoke("jump_to_line", { id }).catch(() => undefined);
               }}
               name={prospect?.name}
+              employees={prospect?.employees}
             />
           ) : (
             <div className="blocks" ref={blocksRef}>

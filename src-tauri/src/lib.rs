@@ -708,8 +708,12 @@ fn begin_session(
                 let mut decided_by_llm = false;
                 // Groq LPU runs in ~150ms; 250ms throttle provides near-instantaneous routing without flooding.
                 let llm_ready =
-                    last_llm.map_or(true, |at| at.elapsed() >= Duration::from_millis(250));
+                    last_llm.map_or(true, |at| at.elapsed() >= Duration::from_millis(1000));
                 if let Some(ref provider) = llm_provider_slot {
+                    if llm_failures >= 3 && last_llm.map_or(false, |at| at.elapsed() >= Duration::from_secs(20)) {
+                        llm_failures = 0;
+                        println!("TRACKER_LLM_RESET circuit breaker reset after quiet cooldown");
+                    }
                     if llm_failures < 3 && llm_ready {
                         last_llm = Some(std::time::Instant::now());
                         let provider_name = match provider {
@@ -741,6 +745,10 @@ fn begin_session(
                             Err(err) => {
                                 llm_failures += 1;
                                 eprintln!("TRACKER_LLM_ERROR ({provider_name}) n={llm_failures} {err}");
+                                if err.contains("429") {
+                                    // Rate limit backoff: quench for 5 seconds to recharge token bucket
+                                    last_llm = Some(std::time::Instant::now() + Duration::from_secs(5));
+                                }
                             }
                         }
                     } else if verbose {

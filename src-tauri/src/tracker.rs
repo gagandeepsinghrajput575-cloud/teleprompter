@@ -35,7 +35,7 @@ const MIN_DOMINANT_SCORE: f64 = 1.6;
 const MIN_COVERAGE: f64 = 0.25;
 /// Fraction of the active line the speaker must have delivered before the *next* line may pull
 /// the highlight forward early. This is the guard against jumping on the first couple of words.
-const EAGER_MIN_ACTIVE_PROGRESS: f64 = 0.5;
+const EAGER_MIN_ACTIVE_PROGRESS: f64 = 0.80;
 /// Coverage of the active line that counts an utterance final as a *completed* line rather than
 /// a breath/emphasis pause. High on purpose: a pause mid-sentence must not advance the script.
 const COMPLETE_MIN_COVERAGE: f64 = 0.6;
@@ -695,6 +695,33 @@ impl Tracker {
         false
     }
 
+    /// True when closing tail tokens of the active line are present in recent speech.
+    fn active_tail_present(&self) -> bool {
+        let Some(line) = self.lines.iter().find(|l| l.id == self.active) else {
+            return false;
+        };
+        let spoken = tokens(&self.spoken_buffer());
+        let mut ordered_variants = vec![spoken_content(&line.raw)];
+        for b in &line.branches {
+            ordered_variants.push(spoken_content(&b.response));
+        }
+
+        for ordered in ordered_variants {
+            if ordered.is_empty() {
+                continue;
+            }
+            let tail_present = ordered.iter().rev().take(3).any(|t| {
+                spoken.contains(t)
+                    || spoken.contains(&stem(t))
+                    || spoken.iter().any(|s| words_match(s, t))
+            });
+            if tail_present {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Fraction of the active line's content words present in recent speech (rolling window +
     /// interim). Used to keep the highlight on the current line until it is largely delivered.
     fn active_progress(&self) -> f64 {
@@ -732,9 +759,11 @@ impl Tracker {
 
         // Eager forward tracking: the opening of the NEXT line may pull the highlight forward
         // before the utterance is finalized, but ONLY once the active line is substantially
-        // delivered. Without this gate the highlight jumped to N+1 on the first two words of N.
+        // delivered and its closing cadence is present. Without this gate the highlight jumped
+        // to N+1 on the first couple of words or when the user was ~70% through line N.
         let active_progress = self.active_progress();
-        if active_progress >= EAGER_MIN_ACTIVE_PROGRESS {
+        let tail_ready = self.active_tail_present();
+        if active_progress >= EAGER_MIN_ACTIVE_PROGRESS && (tail_ready || active_progress >= 0.88) {
             let next_line_opt = self
                 .lines
                 .iter()
@@ -782,8 +811,9 @@ impl Tracker {
 
                     // The speaker must actually be into the next line, and more into it than
                     // into the current one, before the highlight leads them there.
-                    if next_best_hits >= 2 && next_best_hits > curr_hits && next_coverage >= 0.2 {
-                        return Some((next_line.id, true, 2.0 + next_best_hits as f64));
+                    let min_lead_hits = if next_best_len <= 2 { next_best_len } else { 3 };
+                    if next_best_hits >= min_lead_hits && next_best_hits > curr_hits && next_coverage >= 0.25 {
+                        return Some((next_line.id, false, 2.0 + next_best_hits as f64));
                     }
                 }
             }
@@ -842,6 +872,8 @@ impl Tracker {
         }
 
         let is_next_line = best_id == self.active + 1;
+        let is_near_forward = best_id == self.active + 2;
+        let is_distant_forward = best_id > self.active + 2;
         let is_backward = best_id < self.active;
         let coverage = if best_tokens == 0 {
             0.0
@@ -861,10 +893,17 @@ impl Tracker {
         let second = scored.get(1).map(|(_, score, _, _)| *score).unwrap_or(0.0);
 
         // Forward sequence: active -> active + 1 leads slightly easier.
+        // Near forward (active + 2): allows skipping a short beat.
+        // Distant forward (> active + 2): requires distinctive proof (>=3 hits, >=30% coverage)
+        // so accidental 1-2 keyword collisions do not jump across the script.
         // Backward sequence: jumping to an already passed line requires at least 60% coverage
         // so deliberate re-reading tracks smoothly without random shuffling mid-call.
         let (min_hits, min_dominant, ratio_margin, min_coverage) = if is_next_line {
             (2usize, 1.0, 1.1, 0.22)
+        } else if is_near_forward {
+            (2usize.min(best_tokens.max(1)), 1.2, 1.15, 0.25)
+        } else if is_distant_forward {
+            (3usize.min(best_tokens.max(1)), 1.6, 1.20, 0.30)
         } else if is_backward {
             (2usize.min(best_tokens.max(1)), 1.3, 1.15, 0.60)
         } else {

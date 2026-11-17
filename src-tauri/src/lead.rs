@@ -170,8 +170,9 @@ fn handle(mut stream: TcpStream, token: Option<&str>) -> Result<Option<Lead>, St
         }
     }
 
-    if method != "POST" || path != "/lead" {
-        respond(&mut stream, 404, r#"{"error":"POST /lead only"}"#);
+    let path = path.trim_end_matches('/');
+    if method != "POST" || (path != "/lead" && path != "/inbound" && path != "/call/inbound" && path != "/call/start") {
+        respond(&mut stream, 404, r#"{"error":"POST /lead or /inbound only"}"#);
         return Ok(None);
     }
     if from_browser {
@@ -302,6 +303,26 @@ content-length: {}\r\n\r\n{body}",
         assert!(response.starts_with("HTTP/1.1 200"), "got: {response}");
         let lead = rx.recv_timeout(Duration::from_secs(2)).expect("delivered");
         assert_eq!(lead.name.as_deref(), Some("Mike Jensen"));
+    }
+
+    #[test]
+    fn a_posted_inbound_call_is_delivered() {
+        let (tx, rx) = mpsc::channel();
+        let port = spawn(0, None, move |lead| {
+            let _ = tx.send(lead);
+        })
+        .expect("spawn");
+        let body = r#"{"name":"Sarah Connor","employees":"10 to 15"}"#;
+        let req = format!(
+            "POST /inbound HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-type: application/json\r\n\
+content-length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        let response = post(port, &req);
+        assert!(response.starts_with("HTTP/1.1 200"), "got: {response}");
+        let lead = rx.recv_timeout(Duration::from_secs(2)).expect("delivered");
+        assert_eq!(lead.name.as_deref(), Some("Sarah Connor"));
+        assert_eq!(lead.employees.as_deref(), Some("10 to 15"));
     }
 
     /// Regression: a page could otherwise POST to the loopback port and rewrite what the rep

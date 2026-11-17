@@ -253,7 +253,14 @@ fn handle(mut stream: TcpStream, app: &tauri::AppHandle) {
         return;
     }
 
-    if method == "POST" && (path == "/context" || path == "/call/start") {
+    let path = path.trim_end_matches('/');
+    if method == "POST"
+        && (path == "/context"
+            || path == "/call/start"
+            || path == "/inbound"
+            || path == "/call/inbound"
+            || path == "/lead")
+    {
         match parse_context(body.as_bytes()) {
             Ok(ctx) => {
                 if let Ok(mut slot) = CONTEXT.lock() {

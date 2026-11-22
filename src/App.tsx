@@ -17,6 +17,7 @@ import call2Fixture from "./fixtures/call2_sales_script.json";
 import coldcallFixture from "./fixtures/coldcall_scalix.json";
 import ColdCallFlowchart from "./ColdCallFlowchart";
 import { FLOW } from "./lib/coldcall";
+import { EyeScrollController } from "./lib/eyeScroll";
 
 const call1Script = loadScript(call1Fixture as never);
 const call2Script = loadScript(call2Fixture as never);
@@ -175,21 +176,6 @@ export default function App() {
     scriptRef.current = script;
   }, [script]);
 
-  // Keep the active line in the vertical optical centre of the scroll container
-  useLayoutEffect(() => {
-    if (selectedCall === "coldcall") return;
-    const container = blocksRef.current;
-    const el = activeRef.current;
-    if (!container || !el || container.clientHeight === 0) return;
-    const cRect = container.getBoundingClientRect();
-    const eRect = el.getBoundingClientRect();
-    const centring = (container.clientHeight - eRect.height) / 2;
-    const target = Math.max(
-      0,
-      container.scrollTop + (eRect.top - cRect.top) - centring
-    );
-    container.scrollTop = target;
-  }, [activeId, selectedCall]);
 
   const executeJump = useCallback((targetId: number) => {
     setActiveId(targetId);
@@ -297,6 +283,83 @@ export default function App() {
   useEffect(() => {
     setStorage("tp.prospect", JSON.stringify(prospect));
   }, [prospect]);
+
+  const eyeScrollRef = useRef<EyeScrollController | null>(null);
+  if (!eyeScrollRef.current) {
+    eyeScrollRef.current = new EyeScrollController({ eyeLineRatio: 0.24 });
+  }
+  const prevScrollScriptRef = useRef<Script | null>(null);
+  const prevScrollCallRef = useRef<typeof selectedCall>(null);
+
+  // Pin the active card's top reading line to the upper webcam eye-level band.
+  // Snaps instantaneously on mount or script switch; glides smoothly on line advances.
+  useLayoutEffect(() => {
+    const controller = eyeScrollRef.current!;
+    if (selectedCall === "coldcall" || selectedCall === null) {
+      controller.cancel();
+      prevScrollCallRef.current = selectedCall;
+      return;
+    }
+    const container = blocksRef.current;
+    const el = activeRef.current;
+    if (!container || !el) return;
+
+    const scriptChanged =
+      prevScrollScriptRef.current !== script ||
+      prevScrollCallRef.current !== selectedCall;
+    prevScrollScriptRef.current = script;
+    prevScrollCallRef.current = selectedCall;
+
+    // Explicit line change always resumes eye-level tracking even after a manual wheel peek.
+    controller.clearUserHold();
+    controller.align(container, el, { immediate: scriptChanged });
+  }, [activeId, selectedCall, script]);
+
+  // Keep the active line locked to eye level across window resizes and dynamic placeholder
+  // text wrapping (without fighting the rep when they manually wheel-scroll to peek ahead).
+  useEffect(() => {
+    const controller = eyeScrollRef.current!;
+    if (selectedCall === "coldcall" || selectedCall === null) {
+      controller.cancel();
+      return;
+    }
+    const container = blocksRef.current;
+    if (!container) return;
+
+    const onUserScroll = () => controller.noteUserScroll();
+    container.addEventListener("wheel", onUserScroll, { passive: true });
+    container.addEventListener("touchstart", onUserScroll, { passive: true });
+
+    let observer: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      observer = new ResizeObserver(() => {
+        const el = activeRef.current;
+        if (el) {
+          controller.align(container, el, {
+            immediate: true,
+            respectUserHold: true,
+          });
+        }
+      });
+      observer.observe(container);
+      if (activeRef.current) {
+        observer.observe(activeRef.current);
+      }
+    }
+
+    return () => {
+      container.removeEventListener("wheel", onUserScroll);
+      container.removeEventListener("touchstart", onUserScroll);
+      observer?.disconnect();
+    };
+  }, [selectedCall, activeId, prospect.name, prospect.company, prospect.niche, prospect.employees]);
+
+  // Cancel any pending rAF loop cleanly on unmount.
+  useEffect(() => {
+    return () => {
+      eyeScrollRef.current?.cancel();
+    };
+  }, []);
 
   const clearLead = useCallback(() => {
     const empty = { name: "", company: "", niche: "", employees: "" };

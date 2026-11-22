@@ -327,8 +327,14 @@ body {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  scroll-behavior: smooth;
-  padding: 30px 4px 180px 0;
+  /* CRITICAL: Never use `scroll-behavior: smooth` here — WKWebView fights rAF scrollTop writes */
+  scroll-behavior: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+
+  /* Top & bottom optical runway so Line 1 and the final closing lines (e.g. Line 33)
+     can both sit cleanly at the exact 24% webcam eye line without edge clamping. */
+  padding: 24vh 4px 72vh 0;
   box-sizing: border-box;
 }
 

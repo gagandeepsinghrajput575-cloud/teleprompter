@@ -142,26 +142,28 @@ mod tests {
             event_count += 1;
             if let SttEvent::Transcript(t) = event {
                 let mut tr = tracker.lock().unwrap();
-                if t.is_final {
-                    if let Some(next_id) = tr.on_utterance_final(&t.text) {
-                        if next_id < previous_active {
-                            jitter_violations += 1;
+                let next_committed = match crate::ingest_transcript(&mut tr, &t.text, t.is_final) {
+                    crate::IngestOutcome::Committed(id, _) => Some(id),
+                    crate::IngestOutcome::RunCycle(plan) => match plan.local {
+                        Some((id, true, _)) => {
+                            crate::apply_stage1_confident(&mut tr, id).map(|(nid, _)| nid)
                         }
-                        previous_active = next_id;
-                    } else {
-                        tr.push_text(&t.text);
-                    }
-                    tr.clear_partial();
-                } else {
-                    tr.set_partial(&t.text);
-                    if tr.active_line_spoken_out() {
-                        if let Some(next_id) = tr.complete_active() {
-                            if next_id < previous_active {
-                                jitter_violations += 1;
-                            }
-                            previous_active = next_id;
+                        Some((id, false, _)) => {
+                            crate::apply_stage1_fallback(&mut tr, id, false).map(|(nid, _)| nid)
                         }
+                        None => None,
+                    },
+                    crate::IngestOutcome::Idle => None,
+                };
+                if let Some(next_id) = next_committed {
+                    if next_id < previous_active {
+                        jitter_violations += 1;
                     }
+                    assert!(
+                        next_id < 100,
+                        "center flow must never overflow into branch card {next_id}"
+                    );
+                    previous_active = next_id;
                 }
             }
             if event_count == 50 * bursts.len() {
@@ -226,5 +228,117 @@ mod tests {
         // Even under 2,000 concurrent updates from 8 threads, the window must remain strictly bounded.
         let words = tr.spoken_buffer().split_whitespace().count();
         assert!(words <= 50, "Spoken buffer exceeded bounded size: {}", words);
+    }
+
+    /// 6. Production arbitration end-to-end hardening test on Call 1:
+    /// Exercises `ingest_transcript` + `apply_stage1_confident` + `apply_stage1_fallback` across:
+    /// - Fast-talker run-on Line 1 -> Line 2 -> Line 3
+    /// - Distant forward clamp + short-line backward hysteresis immunity on Line 20
+    /// - Shared-word Line 24 -> Line 25 transition (no false echo drop)
+    /// - 12h/24h smart_format clock matching on Line 31
+    /// - 59-word multi-clause sticky accumulation on Line 32 -> Line 33
+    #[test]
+    fn stress_call1_production_arbitration_end_to_end() {
+        let script = load_script_by_type("call1").expect("call1 fixture loads");
+        let mut tr = Tracker::new(script.lines).expect("tracker builds");
+
+        let step = |tr: &mut Tracker, text: &str, is_final: bool| -> Option<(i32, &'static str)> {
+            match crate::ingest_transcript(tr, text, is_final) {
+                crate::IngestOutcome::Committed(id, reason) => Some((id, reason)),
+                crate::IngestOutcome::RunCycle(plan) => match plan.local {
+                    Some((id, true, _)) => crate::apply_stage1_confident(tr, id),
+                    Some((id, false, _)) => crate::apply_stage1_fallback(tr, id, false),
+                    None => None,
+                },
+                crate::IngestOutcome::Idle => None,
+            }
+        };
+
+        // 1. Fast-talker run-on: Line 1 completes live -> combined final preserves Line 2 opening
+        assert_eq!(
+            step(
+                &mut tr,
+                "good to meet you appreciate you carving out ten minutes",
+                false
+            ),
+            Some((2, "line-spoken"))
+        );
+        assert_eq!(
+            step(
+                &mut tr,
+                "good to meet you appreciate you carving out ten minutes just to set the stage so we use our time well",
+                true
+            ),
+            None
+        );
+        assert_eq!(tr.active_id(), 2);
+        assert_eq!(
+            step(&mut tr, "i'm not here to pitch you anything today", true),
+            Some((3, "line-completed"))
+        );
+
+        // 2. Distant forward clamp & short-line backward immunity while on Line 20
+        tr.jump_to(20);
+        assert_eq!(
+            step(&mut tr, "high value client calls while on site at eight pm who catches that", true),
+            None,
+            "distant line 15 / backward jump must not fire on single utterance"
+        );
+        assert_eq!(tr.active_id(), 20);
+        assert_eq!(
+            step(&mut tr, "walk through how the firm runs", true),
+            None,
+            "short-line Line 8 overlap must never yank tracker backwards"
+        );
+        assert_eq!(tr.active_id(), 20);
+
+        // 3. Shared-word Line 24 -> Line 25 transition preserves Line 25 clause
+        tr.jump_to(24);
+        assert_eq!(tr.complete_active(), Some(25));
+        assert_eq!(step(&mut tr, "if you add those three up missing just one or two good jobs a month", true), None);
+        assert_eq!(step(&mut tr, "losing five hours a week", true), None);
+        assert_eq!(tr.active_id(), 25);
+        assert_eq!(
+            step(&mut tr, "you're easily leaving fifteen k on the table every single month", true),
+            Some((26, "line-completed"))
+        );
+
+        // 4. Line 31 -> Line 32 via Deepgram smart_format 12h times ("2:30", "3:00")
+        tr.jump_to(31);
+        assert_eq!(
+            step(
+                &mut tr,
+                "it'll take me about 24 hours to put your custom build together are you in front of your computer tomorrow around 2:30 or is Thursday at 3:00 better",
+                true
+            ),
+            Some((32, "line-completed"))
+        );
+
+        // 5. Long 59-word Line 32 across 3 breath clauses + fillers -> Line 33
+        assert_eq!(
+            step(
+                &mut tr,
+                "um Lars as we both know software companies build generic tools that look great when everything goes by the book",
+                true
+            ),
+            None
+        );
+        assert_eq!(
+            step(
+                &mut tr,
+                "uh the problem is real customers don't go by the book they interrupt they're annoyed and sometimes they're plain weird",
+                true
+            ),
+            None
+        );
+        assert_eq!(
+            step(
+                &mut tr,
+                "before tomorrow think of your two most chaotic customer calls throw them straight at the AI to see if it's actually reliable",
+                false
+            ),
+            Some((33, "line-spoken"))
+        );
+        assert_eq!(tr.active_id(), 33);
     }
 }

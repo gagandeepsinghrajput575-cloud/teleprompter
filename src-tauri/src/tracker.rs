@@ -73,6 +73,13 @@ pub struct ScriptLine {
     pub body: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub branches: Vec<ScriptBranch>,
+    /// Optional explicit flowchart successor (`Some(Some(id))` = explicit link,
+    /// `Some(None)` = terminal card with no sequential successor, `None` = next slice index).
+    #[serde(skip)]
+    pub explicit_next: Option<Option<i32>>,
+    /// Archived/deleted flowchart cards (kept in `lines` for UI compatibility, ignored by matching).
+    #[serde(skip)]
+    pub deleted: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -93,6 +100,10 @@ struct RawFlowCard {
     #[serde(default)]
     label: String,
     raw: String,
+    #[serde(default)]
+    next: Option<i32>,
+    #[serde(default)]
+    deleted: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -203,6 +214,8 @@ pub fn load_script_by_type(call_type: &str) -> Result<ScriptFile, String> {
                 label: line.label,
                 raw: line.raw,
                 branches: line.branches,
+                explicit_next: None,
+                deleted: false,
             })
             .collect()
     } else {
@@ -216,6 +229,8 @@ pub fn load_script_by_type(call_type: &str) -> Result<ScriptFile, String> {
                 label: card.label,
                 raw: card.raw,
                 branches: Vec::new(),
+                explicit_next: Some(card.next),
+                deleted: card.deleted,
             })
             .collect()
     };
@@ -229,6 +244,51 @@ pub fn load_script_by_type(call_type: &str) -> Result<ScriptFile, String> {
 
 pub fn load_script() -> Result<ScriptFile, String> {
     load_script_by_type("call1")
+}
+
+/// Signed step distance between two line IDs in script order, respecting explicit flowchart links,
+/// terminal cards (`explicit_next == Some(None)`), and archived (`deleted`) cards.
+/// Shared single source of truth between `tracker.rs` and `lib.rs`.
+pub fn line_step_in_slice(lines: &[ScriptLine], from_id: i32, to_id: i32) -> Option<isize> {
+    let from_idx = lines.iter().position(|l| l.id == from_id)?;
+    let to_idx = lines.iter().position(|l| l.id == to_id)?;
+    if from_idx == to_idx {
+        return Some(0);
+    }
+    if lines[to_idx].deleted {
+        return None;
+    }
+    // Never step forward past a terminal card (e.g. Cold Call Turn 7 -> Branch 100).
+    if to_idx > from_idx && lines[from_idx].explicit_next == Some(None) {
+        return None;
+    }
+    if lines[from_idx].explicit_next.is_some() {
+        let mut cursor = from_idx;
+        for hop in 1..=8isize {
+            match lines[cursor].explicit_next {
+                Some(Some(next_id)) => {
+                    if next_id == to_id {
+                        return Some(hop);
+                    }
+                    let Some(next_idx) = lines.iter().position(|l| l.id == next_id) else {
+                        break;
+                    };
+                    if next_idx == from_idx {
+                        break;
+                    }
+                    cursor = next_idx;
+                }
+                Some(None) => {
+                    if to_idx > from_idx {
+                        return None;
+                    }
+                    break;
+                }
+                None => break,
+            }
+        }
+    }
+    Some(to_idx as isize - from_idx as isize)
 }
 
 const STOPWORDS: &[&str] = &[
@@ -374,53 +434,131 @@ pub fn count_hits(heard: &HashSet<String>, line_body: &HashSet<String>) -> usize
         .count()
 }
 
-/// Normalizes numeric tokens and times into spoken words so "10" matches "ten", "4" matches "four", etc.
+/// Normalizes numeric tokens, hyphenated leading numbers ("5-star", "10-minute"), and 12h/24h
+/// clock times into single canonical tokens so Deepgram `smart_format=true` ("2:30", "14:30",
+/// "3:00", "15:00", "100%") and spoken phrases ("two thirty", "fourteen thirty", "three")
+/// match 1:1 without inflating script denominators.
 fn expand_numbers_and_contractions(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 32);
-    for raw_word in text.split_whitespace() {
+    let map_number = |tok: &str| -> Option<&'static str> {
+        match tok {
+            "1" => Some("one"),
+            "2" => Some("two"),
+            "3" => Some("three"),
+            "4" => Some("four"),
+            "5" => Some("five"),
+            "6" => Some("six"),
+            "7" => Some("seven"),
+            "8" => Some("eight"),
+            "9" => Some("nine"),
+            "10" => Some("ten"),
+            "11" => Some("eleven"),
+            "12" => Some("twelve"),
+            "13" => Some("thirteen"),
+            "14" => Some("fourteen"),
+            "15" => Some("fifteen"),
+            "16" => Some("sixteen"),
+            "17" => Some("seventeen"),
+            "18" => Some("eighteen"),
+            "19" => Some("nineteen"),
+            "20" => Some("twenty"),
+            "24" => Some("twenty four"),
+            "30" => Some("thirty"),
+            "40" => Some("forty"),
+            "50" => Some("fifty"),
+            "60" => Some("sixty"),
+            "80" => Some("eighty"),
+            "100" => Some("hundred"),
+            "12:30" => Some("twelvethirty"),
+            "14:30" | "2:30" | "02:30" => Some("twothirty"),
+            "15:30" | "3:30" | "03:30" => Some("threethirty"),
+            "15:00" | "3:00" | "03:00" => Some("three"),
+            "8:00" | "08:00" => Some("eight"),
+            "8:30" | "08:30" => Some("eightthirty"),
+            "$15k" | "15k" | "15,000" | "15000" | "$15,000" => Some("fifteen thousand"),
+            "40,000" | "40000" => Some("forty thousand"),
+            "80,000" | "80000" => Some("eighty thousand"),
+            "100,000" | "100000" => Some("hundred thousand"),
+            "200,000" | "200000" => Some("two hundred thousand"),
+            _ => None,
+        }
+    };
+
+    let raw_words: Vec<&str> = text.split_whitespace().collect();
+    let mut expanded_words: Vec<String> = Vec::with_capacity(raw_words.len() + 8);
+
+    for raw_word in raw_words {
         let lower = raw_word.to_lowercase();
         let cleaned =
             lower.trim_matches(|c: char| !c.is_alphanumeric() && c != ':' && c != '$' && c != ',');
-        match cleaned {
-            "1" => out.push_str("one "),
-            "2" => out.push_str("two "),
-            "3" => out.push_str("three "),
-            "4" => out.push_str("four "),
-            "5" => out.push_str("five "),
-            "6" => out.push_str("six "),
-            "7" => out.push_str("seven "),
-            "8" => out.push_str("eight "),
-            "9" => out.push_str("nine "),
-            "10" => out.push_str("ten "),
-            "11" => out.push_str("eleven "),
-            "12" => out.push_str("twelve "),
-            "13" => out.push_str("thirteen "),
-            "14" => out.push_str("fourteen "),
-            "15" => out.push_str("fifteen "),
-            "16" => out.push_str("sixteen "),
-            "17" => out.push_str("seventeen "),
-            "18" => out.push_str("eighteen "),
-            "19" => out.push_str("nineteen "),
-            "20" => out.push_str("twenty "),
-            "24" => out.push_str("twenty four "),
-            "30" => out.push_str("thirty "),
-            "40" => out.push_str("forty "),
-            "50" => out.push_str("fifty "),
-            "60" => out.push_str("sixty "),
-            "80" => out.push_str("eighty "),
-            "12:30" => out.push_str("twelve thirty "),
-            "15:30" => out.push_str("fifteen thirty three thirty "),
-            "14:30" => out.push_str("fourteen thirty two thirty "),
-            "15:00" => out.push_str("fifteen three "),
-            "8:00" => out.push_str("eight "),
-            "$15k" | "15k" => out.push_str("fifteen thousand "),
-            "40,000" | "40000" => out.push_str("forty thousand "),
-            "80,000" | "80000" => out.push_str("eighty thousand "),
-            _ => {
-                out.push_str(raw_word);
-                out.push(' ');
+        if let Some(mapped) = map_number(cleaned) {
+            for part in mapped.split_whitespace() {
+                expanded_words.push(part.to_string());
+            }
+            continue;
+        }
+        if let Some((left, right)) = cleaned.split_once('-') {
+            if let Some(mapped) = map_number(left) {
+                for part in mapped.split_whitespace() {
+                    expanded_words.push(part.to_string());
+                }
+                if !right.is_empty() {
+                    expanded_words.push(right.to_string());
+                }
+                continue;
             }
         }
+        expanded_words.push(raw_word.to_string());
+    }
+
+    let mut out = String::with_capacity(text.len() + 32);
+    let mut i = 0;
+    while i < expanded_words.len() {
+        let w1 = expanded_words[i]
+            .to_lowercase()
+            .trim_matches(|c: char| !c.is_alphanumeric())
+            .to_string();
+        if i + 1 < expanded_words.len() {
+            let w2 = expanded_words[i + 1]
+                .to_lowercase()
+                .trim_matches(|c: char| !c.is_alphanumeric())
+                .to_string();
+            let folded = match (w1.as_str(), w2.as_str()) {
+                ("twelve", "thirty") => Some("twelvethirty"),
+                ("fourteen", "thirty") | ("two", "thirty") => Some("twothirty"),
+                ("fifteen", "thirty") | ("three", "thirty") => Some("threethirty"),
+                ("eight", "thirty") => Some("eightthirty"),
+                _ => None,
+            };
+            if let Some(canon) = folded {
+                out.push_str(canon);
+                out.push(' ');
+                i += 2;
+                continue;
+            }
+            // Spoken 24h hour ("Thursday at fifteen") maps to "at three" without touching
+            // "at fifteen thirty" or "at fifteen minutes/hundred/thousand".
+            if w1 == "at" && w2 == "fifteen" {
+                let w3 = expanded_words
+                    .get(i + 2)
+                    .map(|s| {
+                        s.to_lowercase()
+                            .trim_matches(|c: char| !c.is_alphanumeric())
+                            .to_string()
+                    })
+                    .unwrap_or_default();
+                if !matches!(
+                    w3.as_str(),
+                    "thirty" | "minute" | "minutes" | "hundred" | "thousand" | "k" | "percent"
+                ) {
+                    out.push_str("at three ");
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        out.push_str(&expanded_words[i]);
+        out.push(' ');
+        i += 1;
     }
     out
 }
@@ -584,6 +722,25 @@ impl Tracker {
         self.lines.iter().position(|l| l.id == self.active)
     }
 
+    pub fn line_step(&self, from_id: i32, to_id: i32) -> Option<isize> {
+        line_step_in_slice(&self.lines, from_id, to_id)
+    }
+
+    fn next_line_index(&self, from_idx: usize) -> Option<usize> {
+        let line = self.lines.get(from_idx)?;
+        match line.explicit_next {
+            Some(Some(next_id)) => self
+                .lines
+                .iter()
+                .position(|l| l.id == next_id && !l.deleted),
+            Some(None) => None,
+            None => {
+                let next_idx = from_idx + 1;
+                (next_idx < self.lines.len()).then_some(next_idx)
+            }
+        }
+    }
+
     fn reset_active_matched(&mut self) {
         self.active_matched = self
             .active_line_index()
@@ -690,9 +847,9 @@ impl Tracker {
     /// Strips the leading portion of `text` belonging to `completed_id` while preserving any
     /// unconsumed run-on tail belonging to the current `self.active` line.
     ///
-    /// Uses an O(W) prefix-boundary maximization over raw words: words exclusive to `completed_id`
-    /// pull the split rightward (+2), shared words slightly pull rightward (+1), and words exclusive
-    /// to `self.active` penalize crossing (-2). Returns an empty string when no content words remain.
+    /// Shared words (`in_prev && in_curr`) score 0 and `exclusive_prev_hits >= 1` is required
+    /// before advancing `best_split`, so a new-line clause composed of overlapping vocabulary
+    /// (e.g., Line 25 "losing five hours a week" right after Line 24) is never falsely dropped.
     pub fn strip_completed_prefix(&self, completed_id: i32, text: &str) -> String {
         let raw_words: Vec<&str> = text.split_whitespace().collect();
         if raw_words.is_empty() {
@@ -709,41 +866,58 @@ impl Tracker {
         let mut score: i32 = 0;
         let mut best_score: i32 = 0;
         let mut best_split: usize = 0;
+        let mut exclusive_prev_hits: usize = 0;
 
         for (i, raw_word) in raw_words.iter().enumerate() {
             let word_tokens = ordered_tokens(raw_word);
             if word_tokens.is_empty() {
                 continue;
             }
-            let in_prev = word_tokens.iter().any(|wt| {
-                prev_vars
-                    .iter()
-                    .any(|v| token_matches_set(v, wt))
-            });
+            let in_prev = word_tokens
+                .iter()
+                .any(|wt| prev_vars.iter().any(|v| token_matches_set(v, wt)));
             let in_curr = curr_vars.map_or(false, |cv| {
                 word_tokens
                     .iter()
                     .any(|wt| cv.iter().any(|v| token_matches_set(v, wt)))
             });
 
+            if in_prev && !in_curr {
+                exclusive_prev_hits += 1;
+            }
+
             let delta = match (in_prev, in_curr) {
                 (true, false) => 2,
-                (true, true) => 1,
+                (true, true) => 0,
                 (false, true) => -2,
                 (false, false) => 0,
             };
             score += delta;
-            if score > best_score {
+            if exclusive_prev_hits >= 1 && score > best_score {
                 best_score = score;
                 best_split = i + 1;
             }
         }
 
+        // Zero words exclusive to `completed_id`: not an echo of the previous line.
+        if exclusive_prev_hits == 0 {
+            return text.trim().to_string();
+        }
         if best_split >= raw_words.len() {
             return String::new();
         }
+
         let tail = raw_words[best_split..].join(" ");
-        if ordered_tokens(&tail).is_empty() {
+        let tail_tokens = ordered_tokens(&tail);
+        if tail_tokens.is_empty() {
+            return String::new();
+        }
+        // If every remaining content word after an exclusive-prev prefix still belongs to
+        // `completed_id` (e.g., a trailing shared word at the end of a pure echo), drop it.
+        let tail_all_in_prev = tail_tokens
+            .iter()
+            .all(|wt| prev_vars.iter().any(|v| token_matches_set(v, wt)));
+        if tail_all_in_prev {
             String::new()
         } else {
             tail
@@ -829,10 +1003,8 @@ impl Tracker {
             heard.extend(final_tokens.iter().cloned());
 
             let next_open = self
-                .lines
-                .iter()
-                .find(|l| l.id > self.active)
-                .map(|next| spoken_content(&next.raw));
+                .next_line_index(active_idx)
+                .map(|ni| spoken_content(&self.lines[ni].raw));
 
             let next_started = next_open
                 .as_ref()
@@ -897,7 +1069,9 @@ impl Tracker {
 
     /// Advances from the active line to the one after it, if there is one.
     pub fn complete_active(&mut self) -> Option<i32> {
-        let next = self.lines.iter().find(|l| l.id > self.active)?.id;
+        let active_idx = self.active_line_index()?;
+        let next_idx = self.next_line_index(active_idx)?;
+        let next = self.lines[next_idx].id;
         self.consider(next, true)
     }
 
@@ -1001,12 +1175,17 @@ impl Tracker {
         // and is reading the opening words of the next line.
         let active_progress = self.active_progress();
         let tail_ready = self.active_tail_present();
-        let next_line_opt = self
-            .lines
-            .iter()
-            .enumerate()
-            .skip_while(|(_, l)| l.id <= self.active)
-            .find(|(i, _)| self.line_variants[*i].iter().any(|v| !v.is_empty()));
+        let next_line_opt = self.active_line_index().and_then(|active_idx| {
+            let mut cursor = active_idx;
+            for _ in 0..2 {
+                let next_idx = self.next_line_index(cursor)?;
+                if self.line_variants[next_idx].iter().any(|v| !v.is_empty()) {
+                    return Some((next_idx, &self.lines[next_idx]));
+                }
+                cursor = next_idx;
+            }
+            None
+        });
 
         if let Some((next_idx, next_line)) = next_line_opt {
             let next_vars = &self.line_variants[next_idx];
@@ -1069,6 +1248,9 @@ impl Tracker {
             .iter()
             .zip(self.line_variants.iter())
             .map(|(line, variants)| {
+                if line.deleted {
+                    return (line.id, 0.0, 0, 0);
+                }
                 let mut best_score = 0.0;
                 let mut best_hits = 0usize;
                 let mut best_len = variants.first().map(|v| v.len()).unwrap_or(0);
@@ -1125,10 +1307,11 @@ impl Tracker {
             return None;
         }
 
-        let is_next_line = best_id == self.active + 1;
-        let is_near_forward = best_id == self.active + 2;
-        let is_distant_forward = best_id > self.active + 2;
-        let is_backward = best_id < self.active;
+        let step = self.line_step(self.active, best_id);
+        let is_next_line = step == Some(1);
+        let is_near_forward = step == Some(2);
+        let is_distant_forward = matches!(step, Some(s) if s > 2);
+        let is_backward = matches!(step, Some(s) if s < 0);
         let coverage = if best_tokens == 0 {
             0.0
         } else {
@@ -1172,6 +1355,10 @@ impl Tracker {
         let mut confident =
             best_hits >= effective_min_hits && margin_ok && coverage >= min_coverage;
 
+        if step.is_none() {
+            confident = false;
+        }
+
         // Forward gate: while the active line is still mostly unspoken, a proposal for the next
         // line must be unmistakable (the speaker has clearly moved on) or the highlight holds.
         if is_next_line && active_progress < EAGER_MIN_ACTIVE_PROGRESS {
@@ -1196,7 +1383,11 @@ impl Tracker {
         // require 60% coverage to be confident; when confident (intentional re-read), they commit
         // immediately (1 confirmation). Unconfident backward proposals require three confirmations
         // to prevent jitter and random shuffling mid-call.
-        let required: u8 = if proposed > self.active {
+        let is_forward = self
+            .line_step(self.active, proposed)
+            .map_or(proposed > self.active, |s| s > 0);
+
+        let required: u8 = if is_forward {
             if confident {
                 1
             } else {
@@ -1217,7 +1408,7 @@ impl Tracker {
 
         if self.pending_count >= required {
             let old_active = self.active;
-            if proposed > old_active {
+            if is_forward {
                 self.last_completed = Some((old_active, Instant::now()));
             }
             self.active = proposed;
@@ -1932,6 +2123,8 @@ mod jev_parse_tests {
                 raw: "raw".into(),
                 body: "walk me through a typical day".into(),
                 branches: Vec::new(),
+                explicit_next: None,
+                deleted: false,
             },
             ScriptLine {
                 id: 8,
@@ -1940,6 +2133,8 @@ mod jev_parse_tests {
                 raw: "raw".into(),
                 body: "where does your personal time go".into(),
                 branches: Vec::new(),
+                explicit_next: None,
+                deleted: false,
             },
         ]
     }
@@ -2946,5 +3141,70 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn strip_completed_prefix_does_not_drop_shared_word_clause_between_line_24_and_25() {
+        let mut t = tracker();
+        t.jump_to(24);
+        assert_eq!(t.complete_active(), Some(25));
+        assert_eq!(t.active_id(), 25);
+
+        // "losing", "hours", "week" appear in both Line 24 and Line 25; with zero exclusive
+        // Line 24 words, this clause belongs to Line 25 and must be preserved intact.
+        let line25_clause = "losing five hours a week";
+        assert_eq!(
+            t.strip_completed_prefix(24, line25_clause),
+            line25_clause,
+            "shared vocabulary clause on Line 25 must not be stripped as a Line 24 echo"
+        );
+    }
+
+    #[test]
+    fn clock_times_match_across_24h_12h_and_smart_format_without_denominator_inflation() {
+        let mut t = tracker();
+        t.jump_to(31);
+        assert_eq!(t.active_id(), 31);
+
+        // Spoken 12h phrasing ("two thirty", "three") against script "14:30" and "15:00"
+        t.set_partial(
+            "it'll take me about twenty four hours to put your custom build together are you in front of your computer tomorrow around two thirty or is Thursday at three better",
+        );
+        assert!(t.active_line_spoken_out());
+
+        // Deepgram smart_format=true digital 12h formatting ("2:30", "3:00")
+        t.reanchor();
+        t.set_partial(
+            "it'll take me about 24 hours to put your custom build together are you in front of your computer tomorrow around 2:30 or is Thursday at 3:00 better",
+        );
+        assert!(t.active_line_spoken_out());
+
+        // Spoken 24h phrasing ("fourteen thirty", "at fifteen")
+        t.reanchor();
+        t.set_partial(
+            "it'll take me about 24 hours to put your custom build together are you in front of your computer tomorrow around fourteen thirty or is Thursday at fifteen better",
+        );
+        assert!(t.active_line_spoken_out());
+    }
+
+    #[test]
+    fn coldcall_center_advances_1_to_7_without_gap_and_stops_cleanly_at_terminal_turn_7() {
+        let cold = load_script_by_type("coldcall").unwrap();
+        let mut t = Tracker::new(cold.lines).unwrap();
+
+        let expected = [1, 3, 4, 5, 6, 7];
+        assert_eq!(t.active_id(), expected[0]);
+        for &next_expected in &expected[1..] {
+            assert_eq!(t.complete_active(), Some(next_expected));
+            assert_eq!(t.active_id(), next_expected);
+        }
+
+        // Turn 7 has `"next": null`: completing it must NOT overflow into Branch 100.
+        assert_eq!(t.complete_active(), None);
+        assert_eq!(t.active_id(), 7);
+        assert_eq!(t.line_step(7, 100), None);
+        assert_eq!(t.line_step(6, 100), None);
+        // Deleted branch 104 must never be step-reachable.
+        assert_eq!(t.line_step(1, 104), None);
     }
 }

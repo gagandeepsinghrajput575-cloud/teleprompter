@@ -487,9 +487,7 @@ const STALE_ECHO_WINDOW: Duration = Duration::from_millis(2500);
 /// Uses index arithmetic rather than raw `to_id - from_id` so non-contiguous scripts
 /// (e.g., Cold Call ID 1 -> ID 3) still measure as step +1.
 pub(crate) fn line_step(lines: &[tracker::ScriptLine], from_id: i32, to_id: i32) -> Option<isize> {
-    let from_idx = lines.iter().position(|l| l.id == from_id)?;
-    let to_idx = lines.iter().position(|l| l.id == to_id)?;
-    Some(to_idx as isize - from_idx as isize)
+    tracker::line_step_in_slice(lines, from_id, to_id)
 }
 
 /// Snapshot produced by `ingest_transcript` when a classification cycle should run.
@@ -541,7 +539,7 @@ pub(crate) fn ingest_transcript(tr: &mut Tracker, text: &str, is_final: bool) ->
                 println!("STT_ECHO_DROPPED (pure delayed echo of completed line)");
             }
             Some(effective) => {
-                if effective.len() != text.len() {
+                if effective.len() != text.trim().len() {
                     println!("STT_RUNON_TAIL_PRESERVED tail=\"{effective}\"");
                 }
                 if let Some(next_id) = tr.on_utterance_final(&effective) {

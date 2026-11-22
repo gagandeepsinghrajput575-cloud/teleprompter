@@ -237,19 +237,53 @@ const STOPWORDS: &[&str] = &[
     "out", "about", "into", "when", "then", "than", "there", "here", "does", "did", "doing", "get",
     "got", "one", "two", "our", "its", "we", "us", "me", "my", "so", "if", "or", "of", "to", "in",
     "on", "at", "is", "it", "be", "as", "a", "an", "do", "much", "most", "right", "now", "like",
-    "really", "actually", "think", "know",
+    "really", "actually", "think", "know", "yeah", "yep", "yes", "okay", "ok", "well", "honestly",
+    "basically", "alright", "wait", "btw", "don", "dont", "isn", "isnt", "lets", "won", "wont",
+    "didn", "didnt", "haven", "havent", "aren", "arent", "cant", "couldn", "couldnt", "wouldn",
+    "wouldnt", "shouldn", "shouldnt", "cannot", "could", "would", "should", "might", "must",
+    "shall", "let", "doesnt", "hasnt", "wasnt", "werent", "aint", "youre", "thats", "whats",
+    "theyre", "theyll", "theyve", "youll", "youve", "ive", "ill", "weve", "theres", "heres",
+    "hes", "shes", "whos", "itll", "thatll", "wed", "youd",
 ];
 
+/// Identifies conversational acoustic fillers ("um", "uh", etc.) that should not consume
+/// slots in the rolling window or trigger cycle computations.
+pub fn is_filler_word(w: &str) -> bool {
+    let cleaned = w.trim_matches(|c: char| !c.is_alphabetic()).to_lowercase();
+    matches!(
+        cleaned.as_str(),
+        "um" | "uh" | "uhh" | "umm" | "ah" | "er" | "hmm" | "mhm"
+    )
+}
+
 /// Simple English stemmer for common suffixes so plurals ("calls" vs "call") and verb forms
-/// ("booking" vs "booked") match seamlessly.
+/// ("booking" vs "booked", "sitting" vs "sit") match seamlessly.
 pub fn stem(word: &str) -> String {
     let mut w = word.to_lowercase();
     if w.len() > 5 && w.ends_with("ing") {
         w.truncate(w.len() - 3);
+        // Collapse doubled consonants: "sitting" -> "sitt" -> "sit", "running" -> "run"
+        if w.len() >= 3 {
+            let bytes = w.as_bytes();
+            let last = bytes[bytes.len() - 1];
+            let second_last = bytes[bytes.len() - 2];
+            if last == second_last && matches!(last, b'b' | b'd' | b'g' | b'm' | b'n' | b'p' | b'r' | b't') {
+                w.truncate(w.len() - 1);
+            }
+        }
         return w;
     }
     if w.len() > 4 && w.ends_with("ed") {
         w.truncate(w.len() - 2);
+        // Collapse doubled consonants: "spotted" -> "spot", "stopped" -> "stop"
+        if w.len() >= 3 {
+            let bytes = w.as_bytes();
+            let last = bytes[bytes.len() - 1];
+            let second_last = bytes[bytes.len() - 2];
+            if last == second_last && matches!(last, b'b' | b'd' | b'g' | b'm' | b'n' | b'p' | b'r' | b't') {
+                w.truncate(w.len() - 1);
+            }
+        }
         return w;
     }
     if w.len() > 4 && w.ends_with("es") {
@@ -292,6 +326,8 @@ pub fn edit_distance(s1: &str, s2: &str) -> usize {
 }
 
 /// Matches words with stem invariance and fuzzy tolerance for phonetic/ASR near-misses.
+/// Tightened to prevent false-positive collisions on short rhyming words (e.g. calls vs falls)
+/// while still catching 1-char ASR drops on 4-5 char words that share both endpoints (e.g. pich/pitch).
 pub fn words_match(a: &str, b: &str) -> bool {
     if a == b {
         return true;
@@ -301,12 +337,19 @@ pub fn words_match(a: &str, b: &str) -> bool {
     if sa == sb || sa == b || a == sb {
         return true;
     }
-    let la = a.chars().count();
-    let lb = b.chars().count();
+    let v1: Vec<char> = a.chars().collect();
+    let v2: Vec<char> = b.chars().collect();
+    let la = v1.len();
+    let lb = v2.len();
+    if la == 0 || lb == 0 || v1[0] != v2[0] {
+        return false;
+    }
     if la.abs_diff(lb) <= 2 {
         let max_edits = if la >= 8 && lb >= 8 {
             2
-        } else if la >= 5 && lb >= 5 {
+        } else if la >= 6 && lb >= 6 {
+            1
+        } else if la.min(lb) >= 4 && la.max(lb) >= 5 && v1[la - 1] == v2[lb - 1] {
             1
         } else {
             0
@@ -366,9 +409,9 @@ fn expand_numbers_and_contractions(text: &str) -> String {
             "60" => out.push_str("sixty "),
             "80" => out.push_str("eighty "),
             "12:30" => out.push_str("twelve thirty "),
-            "15:30" => out.push_str("fifteen thirty "),
-            "14:30" => out.push_str("fourteen thirty "),
-            "15:00" => out.push_str("fifteen "),
+            "15:30" => out.push_str("fifteen thirty three thirty "),
+            "14:30" => out.push_str("fourteen thirty two thirty "),
+            "15:00" => out.push_str("fifteen three "),
             "8:00" => out.push_str("eight "),
             "$15k" | "15k" => out.push_str("fifteen thousand "),
             "40,000" | "40000" => out.push_str("forty thousand "),
@@ -384,14 +427,38 @@ fn expand_numbers_and_contractions(text: &str) -> String {
 
 /// Content words in spoken order (stopwords and very short words removed), deduplicated only by
 /// the caller. Order matters for detecting a line's *closing* words at a pause.
+/// Strips straight and curly apostrophes BEFORE splitting so contractions ("don't", "doesn't")
+/// never fragment into bogus denominator tokens.
 fn ordered_tokens(text: &str) -> Vec<String> {
     let expanded = expand_numbers_and_contractions(text);
-    expanded
+    let no_apostrophes = expanded.replace(['\'', '\u{2019}'], "");
+    no_apostrophes
         .to_lowercase()
         .split(|c: char| !c.is_alphanumeric())
-        .map(|w| w.replace('\'', "").trim().to_string())
-        .filter(|w| (w.len() >= 3 || w == "hi") && !STOPWORDS.contains(&w.as_str()))
+        .map(|w| w.trim().to_string())
+        .filter(|w| {
+            (w.len() >= 3 || w == "hi")
+                && !STOPWORDS.contains(&w.as_str())
+                && !is_filler_word(w)
+        })
         .collect()
+}
+
+/// Returns the trailing `max_tokens` content words from `text` so closing-word checks (`tail_present`)
+/// cannot be satisfied by an earlier occurrence of a repeated word in an opening clause.
+fn trailing_tokens(text: &str, max_tokens: usize) -> HashSet<String> {
+    let ordered = ordered_tokens(text);
+    ordered
+        .into_iter()
+        .rev()
+        .take(max_tokens)
+        .collect()
+}
+
+fn token_matches_set(set: &HashSet<String>, target: &str) -> bool {
+    set.contains(target)
+        || set.contains(&stem(target))
+        || set.iter().any(|h| words_match(h, target))
 }
 
 fn tokens(text: &str) -> HashSet<String> {
@@ -458,6 +525,10 @@ pub struct Tracker {
     /// Per-line matching variants: each line has a list of token sets (the primary line, plus any
     /// branch responses) so branch paths don't inflate the primary line's coverage denominator.
     line_variants: Vec<Vec<HashSet<String>>>,
+    /// Sticky matched canonical target tokens accumulated from *finalized* clauses while on the
+    /// active line (one set per variant). Prevents the 18-word rolling window from evicting early
+    /// clauses on 30-59 word lines while staying strictly bounded to `<= variant.len()`.
+    active_matched: Vec<HashSet<String>>,
     active: i32,
     window: VecDeque<String>,
     words_since_cycle: usize,
@@ -488,9 +559,14 @@ impl Tracker {
     pub fn new(lines: Vec<ScriptLine>) -> Result<Self, String> {
         let active = lines.first().ok_or("script has no lines")?.id;
         let line_variants: Vec<Vec<HashSet<String>>> = lines.iter().map(line_variants).collect();
+        let active_matched = line_variants
+            .first()
+            .map(|vars| vec![HashSet::new(); vars.len()])
+            .unwrap_or_default();
         Ok(Self {
             lines,
             line_variants,
+            active_matched,
             active,
             window: VecDeque::with_capacity(BUFFER_WORDS),
             words_since_cycle: 0,
@@ -504,6 +580,62 @@ impl Tracker {
         })
     }
 
+    fn active_line_index(&self) -> Option<usize> {
+        self.lines.iter().position(|l| l.id == self.active)
+    }
+
+    fn reset_active_matched(&mut self) {
+        self.active_matched = self
+            .active_line_index()
+            .map(|idx| vec![HashSet::new(); self.line_variants[idx].len()])
+            .unwrap_or_default();
+    }
+
+    /// Latches finalized content tokens that match the active line's variants into `active_matched`.
+    /// Never fed from interims so transient ASR guesses cannot permanently inflate coverage.
+    fn record_active_matches(&mut self, text: &str) {
+        let Some(idx) = self.active_line_index() else {
+            return;
+        };
+        let heard = tokens(text);
+        if heard.is_empty() {
+            return;
+        }
+        let variants = &self.line_variants[idx];
+        if self.active_matched.len() != variants.len() {
+            self.active_matched = vec![HashSet::new(); variants.len()];
+        }
+        for (vi, var) in variants.iter().enumerate() {
+            for target in var {
+                if !self.active_matched[vi].contains(target) && token_matches_set(&heard, target) {
+                    self.active_matched[vi].insert(target.clone());
+                }
+            }
+        }
+    }
+
+    /// Computes coverage of `variant_idx` on the active line by combining sticky finalized hits
+    /// with live hits in `live_heard`.
+    fn active_variant_coverage(
+        &self,
+        active_idx: usize,
+        variant_idx: usize,
+        live_heard: &HashSet<String>,
+    ) -> f64 {
+        let var = &self.line_variants[active_idx][variant_idx];
+        if var.is_empty() {
+            return 1.0;
+        }
+        let sticky = self.active_matched.get(variant_idx);
+        let hits = var
+            .iter()
+            .filter(|bw| {
+                sticky.map_or(false, |s| s.contains(*bw)) || token_matches_set(live_heard, bw)
+            })
+            .count();
+        hits as f64 / var.len() as f64
+    }
+
     pub fn lines(&self) -> &[ScriptLine] {
         &self.lines
     }
@@ -513,6 +645,7 @@ impl Tracker {
         self.lines = lines;
         self.line_variants = self.lines.iter().map(line_variants).collect();
         self.active = first_id;
+        self.reset_active_matched();
         self.pending_id = None;
         self.pending_count = 0;
         self.window.clear();
@@ -554,6 +687,69 @@ impl Tracker {
         false
     }
 
+    /// Strips the leading portion of `text` belonging to `completed_id` while preserving any
+    /// unconsumed run-on tail belonging to the current `self.active` line.
+    ///
+    /// Uses an O(W) prefix-boundary maximization over raw words: words exclusive to `completed_id`
+    /// pull the split rightward (+2), shared words slightly pull rightward (+1), and words exclusive
+    /// to `self.active` penalize crossing (-2). Returns an empty string when no content words remain.
+    pub fn strip_completed_prefix(&self, completed_id: i32, text: &str) -> String {
+        let raw_words: Vec<&str> = text.split_whitespace().collect();
+        if raw_words.is_empty() {
+            return String::new();
+        }
+        let Some(prev_idx) = self.lines.iter().position(|l| l.id == completed_id) else {
+            return text.trim().to_string();
+        };
+        let prev_vars = &self.line_variants[prev_idx];
+        let curr_vars = self
+            .active_line_index()
+            .map(|idx| &self.line_variants[idx]);
+
+        let mut score: i32 = 0;
+        let mut best_score: i32 = 0;
+        let mut best_split: usize = 0;
+
+        for (i, raw_word) in raw_words.iter().enumerate() {
+            let word_tokens = ordered_tokens(raw_word);
+            if word_tokens.is_empty() {
+                continue;
+            }
+            let in_prev = word_tokens.iter().any(|wt| {
+                prev_vars
+                    .iter()
+                    .any(|v| token_matches_set(v, wt))
+            });
+            let in_curr = curr_vars.map_or(false, |cv| {
+                word_tokens
+                    .iter()
+                    .any(|wt| cv.iter().any(|v| token_matches_set(v, wt)))
+            });
+
+            let delta = match (in_prev, in_curr) {
+                (true, false) => 2,
+                (true, true) => 1,
+                (false, true) => -2,
+                (false, false) => 0,
+            };
+            score += delta;
+            if score > best_score {
+                best_score = score;
+                best_split = i + 1;
+            }
+        }
+
+        if best_split >= raw_words.len() {
+            return String::new();
+        }
+        let tail = raw_words[best_split..].join(" ");
+        if ordered_tokens(&tail).is_empty() {
+            String::new()
+        } else {
+            tail
+        }
+    }
+
     pub fn spoken_buffer(&self) -> String {
         let mut parts: Vec<String> = self.window.iter().cloned().collect();
         let partial = self.partial.trim();
@@ -563,15 +759,22 @@ impl Tracker {
         parts.join(" ")
     }
 
-    /// Adds spoken words to the rolling window; returns how many were new.
+    /// Adds finalized spoken words to the rolling window (filtering acoustic fillers so "um"/"uh"
+    /// never evict real script words) and latches any active-line hits into `active_matched`.
     pub fn push_text(&mut self, text: &str) -> usize {
         let mut added = 0;
         for word in text.split_whitespace() {
+            if is_filler_word(word) {
+                continue;
+            }
             if self.window.len() == BUFFER_WORDS {
                 self.window.pop_front();
             }
             self.window.push_back(word.to_string());
             added += 1;
+        }
+        if added > 0 {
+            self.record_active_matches(text);
         }
         self.words_since_cycle += added;
         added
@@ -608,11 +811,6 @@ impl Tracker {
 
     /// When an utterance is finalized (the speaker paused), decide whether the active line was
     /// actually finished or whether this is only a breath / emphasis pause mid-sentence.
-    ///
-    /// The old test (`2 hits OR 35%`) completed a line after its opening clause, so a natural
-    /// pause — or a Hormozi `[⏸️ PAUSE 1s]` cue — advanced the script while the rep was still
-    /// mid-sentence. Completion now needs strong evidence: most of the line, or its closing
-    /// words, or the speaker having plainly started the next line.
     pub fn on_utterance_final(&mut self, text: &str) -> Option<i32> {
         let final_tokens = tokens(text);
         if final_tokens.is_empty() {
@@ -620,7 +818,8 @@ impl Tracker {
         }
 
         let complete = {
-            let curr_line = self.lines.iter().find(|l| l.id == self.active)?;
+            let active_idx = self.active_line_index()?;
+            let curr_line = &self.lines[active_idx];
             let mut ordered_variants = vec![spoken_content(&curr_line.raw)];
             for b in &curr_line.branches {
                 ordered_variants.push(spoken_content(&b.response));
@@ -629,39 +828,43 @@ impl Tracker {
             let mut heard = tokens(&self.spoken_buffer());
             heard.extend(final_tokens.iter().cloned());
 
+            let next_open = self
+                .lines
+                .iter()
+                .find(|l| l.id > self.active)
+                .map(|next| spoken_content(&next.raw));
+
+            let next_started = next_open
+                .as_ref()
+                .map(|open| {
+                    open.iter()
+                        .take(2)
+                        .filter(|t| token_matches_set(&final_tokens, t))
+                        .count()
+                        >= 2
+                })
+                .unwrap_or(false);
+
             let mut any_variant_complete = false;
-            for ordered in ordered_variants {
+            for (vi, ordered) in ordered_variants.iter().enumerate() {
                 if ordered.is_empty() {
                     any_variant_complete = true;
                     break;
                 }
-                let body: HashSet<String> = ordered.iter().cloned().collect();
-                let hits = count_hits(&heard, &body);
-                let coverage = hits as f64 / body.len() as f64;
-                // Closing words: check the last 3 words using stem and fuzzy matching
-                let tail_present = ordered.iter().rev().take(3).any(|t| {
-                    heard.contains(t)
-                        || heard.contains(&stem(t))
-                        || heard.iter().any(|h| words_match(h, t))
-                });
-                // Did the speaker already begin the next line? Then this one is over.
-                let next_started = self
-                    .lines
+                let coverage = if vi < self.line_variants[active_idx].len() {
+                    self.active_variant_coverage(active_idx, vi, &heard)
+                } else {
+                    let body: HashSet<String> = ordered.iter().cloned().collect();
+                    count_hits(&heard, &body) as f64 / body.len() as f64
+                };
+                // Order-aware closing words: check only `final_tokens` (the clause that just ended
+                // at the pause) so an earlier occurrence of a repeated word (e.g. "month" in Line 25)
+                // cannot falsely complete the line on a mid-sentence breath pause.
+                let tail_present = ordered
                     .iter()
-                    .find(|l| l.id > self.active)
-                    .map(|next| {
-                        let open = spoken_content(&next.raw);
-                        open.iter()
-                            .take(2)
-                            .filter(|t| {
-                                final_tokens.contains(*t)
-                                    || final_tokens.contains(&stem(t))
-                                    || final_tokens.iter().any(|f| words_match(f, t))
-                            })
-                            .count()
-                            >= 2
-                    })
-                    .unwrap_or(false);
+                    .rev()
+                    .take(3)
+                    .any(|t| token_matches_set(&final_tokens, t));
 
                 if coverage >= COMPLETE_MIN_COVERAGE
                     || (tail_present && coverage >= COMPLETE_TAIL_COVERAGE)
@@ -675,7 +878,18 @@ impl Tracker {
         };
 
         if complete {
-            self.complete_active()
+            let old_active = self.active;
+            let advanced = self.complete_active();
+            if advanced.is_some() {
+                // Fast-talker combined-final preservation: if this single final both finished
+                // `old_active` and already carried opening words of the new active line, seed
+                // that unconsumed tail into the new line's window and sticky accumulator.
+                let tail = self.strip_completed_prefix(old_active, text);
+                if !tail.is_empty() {
+                    self.push_text(&tail);
+                }
+            }
+            advanced
         } else {
             None
         }
@@ -689,32 +903,38 @@ impl Tracker {
 
     /// True when the running interim has already covered essentially the whole active line — the
     /// speaker reached the end of the sentence — so the highlight can advance the instant the line
-    /// is read, without waiting for the ~700ms endpointing pause. Interims are guesses, so this is
-    /// deliberately strict (nearly the whole line AND its closing word): a false positive would
-    /// skip a line, which is worse than advancing a beat late.
+    /// is read, without waiting for the ~700ms endpointing pause.
     pub fn active_line_spoken_out(&self) -> bool {
-        let Some(line) = self.lines.iter().find(|l| l.id == self.active) else {
+        let Some(active_idx) = self.active_line_index() else {
             return false;
         };
-        let spoken = tokens(&self.spoken_buffer());
+        let line = &self.lines[active_idx];
+        let buffer = self.spoken_buffer();
+        let spoken = tokens(&buffer);
+        // Order-aware tail: only the last 6 content words of recent speech count as the closing
+        // cadence, preventing repeated words from an opening clause from firing early.
+        let recent_tail = trailing_tokens(&buffer, 6);
+
         let mut ordered_variants = vec![spoken_content(&line.raw)];
         for b in &line.branches {
             ordered_variants.push(spoken_content(&b.response));
         }
 
-        for ordered in ordered_variants {
+        for (vi, ordered) in ordered_variants.iter().enumerate() {
             if ordered.is_empty() {
                 continue;
             }
-            let body: HashSet<String> = ordered.iter().cloned().collect();
-            let hits = count_hits(&spoken, &body);
-            let coverage = hits as f64 / body.len() as f64;
-            let tail_present = ordered.iter().rev().take(2).any(|t| {
-                spoken.contains(t)
-                    || spoken.contains(&stem(t))
-                    || spoken.iter().any(|s| words_match(s, t))
-            });
-            // Auto-advance as soon as line reaches 80% completion (or 70% with closing tail words)
+            let coverage = if vi < self.line_variants[active_idx].len() {
+                self.active_variant_coverage(active_idx, vi, &spoken)
+            } else {
+                let body: HashSet<String> = ordered.iter().cloned().collect();
+                count_hits(&spoken, &body) as f64 / body.len() as f64
+            };
+            let tail_present = ordered
+                .iter()
+                .rev()
+                .take(2)
+                .any(|t| token_matches_set(&recent_tail, t));
             if (coverage >= LIVE_COMPLETE_COVERAGE && tail_present) || coverage >= 0.80 {
                 return true;
             }
@@ -722,12 +942,12 @@ impl Tracker {
         false
     }
 
-    /// True when closing tail tokens of the active line are present in recent speech.
+    /// True when closing tail tokens of the active line are present in recent trailing speech.
     fn active_tail_present(&self) -> bool {
         let Some(line) = self.lines.iter().find(|l| l.id == self.active) else {
             return false;
         };
-        let spoken = tokens(&self.spoken_buffer());
+        let recent_tail = trailing_tokens(&self.spoken_buffer(), 6);
         let mut ordered_variants = vec![spoken_content(&line.raw)];
         for b in &line.branches {
             ordered_variants.push(spoken_content(&b.response));
@@ -737,38 +957,29 @@ impl Tracker {
             if ordered.is_empty() {
                 continue;
             }
-            let tail_present = ordered.iter().rev().take(3).any(|t| {
-                spoken.contains(t)
-                    || spoken.contains(&stem(t))
-                    || spoken.iter().any(|s| words_match(s, t))
-            });
-            if tail_present {
+            if ordered
+                .iter()
+                .rev()
+                .take(3)
+                .any(|t| token_matches_set(&recent_tail, t))
+            {
                 return true;
             }
         }
         false
     }
 
-    /// Fraction of the active line's content words present in recent speech (rolling window +
-    /// interim). Used to keep the highlight on the current line until it is largely delivered.
+    /// Fraction of the active line's content words delivered so far (sticky finalized hits +
+    /// live rolling window/interim). Never regresses as earlier clauses leave the 18-word FIFO.
     fn active_progress(&self) -> f64 {
-        let Some((idx, _)) = self
-            .lines
-            .iter()
-            .enumerate()
-            .find(|(_, l)| l.id == self.active)
-        else {
+        let Some(idx) = self.active_line_index() else {
             return 0.0;
         };
         let variants = &self.line_variants[idx];
         let spoken = tokens(&self.spoken_buffer());
         let mut max_progress = 0.0f64;
-        for var in variants {
-            if var.is_empty() {
-                return 1.0;
-            }
-            let hits = count_hits(&spoken, var);
-            let progress = hits as f64 / var.len() as f64;
+        for vi in 0..variants.len() {
+            let progress = self.active_variant_coverage(idx, vi, &spoken);
             if progress > max_progress {
                 max_progress = progress;
             }
@@ -939,12 +1150,18 @@ impl Tracker {
         } else if is_distant_forward {
             (3usize.min(best_tokens.max(1)), 1.6, 1.20, 0.30)
         } else if is_backward {
-            (2usize.min(best_tokens.max(1)), 1.3, 1.15, 0.60)
+            // Short lines (<= 4 content words like Line 8, 13, 26) require 100% coverage (>= 3 hits)
+            // to be confident backward; longer lines require >= 4 hits and >= 60% coverage.
+            if best_tokens <= 4 {
+                (best_tokens.max(3), 1.6, 1.25, 1.0)
+            } else {
+                (4usize.min(best_tokens), 1.5, 1.20, 0.60)
+            }
         } else {
             (MIN_HITS, MIN_DOMINANT_SCORE, LOCAL_MARGIN, MIN_COVERAGE)
         };
 
-        let effective_min_hits = if best_tokens <= 1 { 1usize } else { min_hits };
+        let effective_min_hits = if best_tokens <= 1 && !is_backward { 1usize } else { min_hits };
 
         let margin_ok = if second <= f64::EPSILON {
             best >= min_dominant
@@ -1004,6 +1221,7 @@ impl Tracker {
                 self.last_completed = Some((old_active, Instant::now()));
             }
             self.active = proposed;
+            self.reset_active_matched();
             self.pending_id = None;
             self.pending_count = 0;
             self.window.clear();
@@ -1040,6 +1258,7 @@ impl Tracker {
         if let Some(line) = self.lines.get(index) {
             self.active = line.id;
         }
+        self.reset_active_matched();
         self.pending_id = None;
         self.pending_count = 0;
         self.window.clear();
@@ -2599,5 +2818,133 @@ mod tests {
         assert!(!t.active_line_spoken_out());
         // Must not commit any jump
         assert_eq!(t.active_id(), 1);
+    }
+
+    #[test]
+    fn long_line_32_accumulates_across_multiple_clauses_without_window_eviction_stall() {
+        let mut t = tracker();
+        t.jump_to(32);
+        assert_eq!(t.active_id(), 32);
+
+        // Clause 1 (18+ raw words) finalized on a breath pause
+        let c1 = "Lars as we both know software companies build generic tools that look great when everything goes by the book";
+        assert_eq!(t.on_utterance_final(c1), None);
+        t.push_text(c1);
+        t.clear_partial();
+
+        // Clause 2 (19 raw words) finalized — completely evicts Clause 1 from 18-word `window`
+        let c2 = "the problem is real customers don't go by the book they interrupt they're annoyed and sometimes they're plain weird";
+        assert_eq!(t.on_utterance_final(c2), None);
+        t.push_text(c2);
+        t.clear_partial();
+
+        // Clause 3 interim — sticky accumulator preserves Clause 1 + 2 so >= 80% fires live
+        t.set_partial("before tomorrow think of your two most chaotic customer calls throw them straight at the AI");
+        assert!(
+            t.active_line_spoken_out(),
+            "long 59-word line must reach 80% live via sticky accumulator despite 18-word FIFO window"
+        );
+        assert_eq!(t.complete_active(), Some(33));
+        assert_eq!(t.active_id(), 33);
+    }
+
+    #[test]
+    fn fillers_and_repetitions_do_not_evict_matched_words_or_corrupt_coverage() {
+        let mut t = tracker();
+        assert_eq!(t.active_id(), 1);
+
+        t.push_text("good to meet you um uh umm uhh er hmm");
+        // Fillers must not consume rolling window slots
+        assert_eq!(t.snapshot().buffered_words, 4);
+
+        t.set_partial("uh appreciate you um carving out ten minutes");
+        assert!(t.active_line_spoken_out());
+        assert_eq!(t.complete_active(), Some(2));
+    }
+
+    #[test]
+    fn line_25_mid_sentence_pause_does_not_fire_early_on_repeated_month() {
+        let mut t = tracker();
+        t.jump_to(25);
+        assert_eq!(t.active_id(), 25);
+
+        // First clause contains "month", which is also Line 25's closing word.
+        let c1 = "if you add those three up missing just one or two good jobs a month";
+        assert_eq!(t.on_utterance_final(c1), None);
+        t.push_text(c1);
+        t.clear_partial();
+
+        // Second clause pauses BEFORE the punchline; "month" must NOT leak from c1 into tail_present.
+        let c2 = "plus losing five hours a week";
+        assert_eq!(
+            t.on_utterance_final(c2),
+            None,
+            "mid-sentence pause on Line 25 must hold before the $15k punchline"
+        );
+        t.push_text(c2);
+        t.clear_partial();
+        assert_eq!(t.active_id(), 25);
+
+        // Final punchline completes Line 25 cleanly.
+        let c3 = "you're easily leaving fifteen k on the table every single month";
+        assert_eq!(t.on_utterance_final(c3), Some(26));
+        assert_eq!(t.active_id(), 26);
+    }
+
+    #[test]
+    fn strip_completed_prefix_preserves_fast_talker_run_on_tail() {
+        let mut t = tracker();
+        t.set_partial("good to meet you appreciate you carving out ten minutes");
+        assert!(t.active_line_spoken_out());
+        assert_eq!(t.complete_active(), Some(2));
+        assert_eq!(t.active_id(), 2);
+
+        // Pure delayed echo of Line 1 -> empty tail
+        assert_eq!(
+            t.strip_completed_prefix(1, "good to meet you appreciate you carving out ten minutes"),
+            ""
+        );
+
+        // Run-on final containing Line 1 + start of Line 2 -> preserves Line 2 opening
+        let tail = t.strip_completed_prefix(
+            1,
+            "good to meet you appreciate you carving out ten minutes just to set the stage so we use our time well",
+        );
+        assert_eq!(tail, "just to set the stage so we use our time well");
+    }
+
+    #[test]
+    fn combined_final_completing_line_one_seeds_line_two_opening() {
+        let mut t = tracker();
+        assert_eq!(t.active_id(), 1);
+
+        // Single combined final carries all of Line 1 + first half of Line 2
+        let combined = "good to meet you appreciate you carving out ten minutes just to set the stage so we use our time well";
+        assert_eq!(t.on_utterance_final(combined), Some(2));
+        assert_eq!(t.active_id(), 2);
+
+        // Finishing the second half of Line 2 must now advance cleanly to Line 3
+        let rest_of_2 = "i'm not here to pitch you anything today";
+        assert_eq!(t.on_utterance_final(rest_of_2), Some(3));
+        assert_eq!(t.active_id(), 3);
+    }
+
+    #[test]
+    fn short_line_partial_overlap_does_not_trigger_confident_backward_jump() {
+        let mut t = tracker();
+        t.jump_to(20);
+        assert_eq!(t.active_id(), 20);
+
+        // Line 8 has 4 content words ("walk", "through", "firm", "structured").
+        // Repeating 3 of them later in the call must NOT trigger an instant confident backward jump.
+        t.push_text("walk through how the firm runs");
+        if let Some((id, confident, _)) = t.local_match() {
+            if id == 8 {
+                assert!(
+                    !confident,
+                    "partial overlap on short 4-word line must not be confident backward"
+                );
+            }
+        }
     }
 }

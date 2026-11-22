@@ -35,14 +35,14 @@ const MIN_DOMINANT_SCORE: f64 = 1.6;
 const MIN_COVERAGE: f64 = 0.25;
 /// Fraction of the active line the speaker must have delivered before the *next* line may pull
 /// the highlight forward early. This is the guard against jumping on the first couple of words.
-const EAGER_MIN_ACTIVE_PROGRESS: f64 = 0.80;
+const EAGER_MIN_ACTIVE_PROGRESS: f64 = 0.65;
 /// Coverage of the active line that counts an utterance final as a *completed* line rather than
 /// a breath/emphasis pause. High on purpose: a pause mid-sentence must not advance the script.
-const COMPLETE_MIN_COVERAGE: f64 = 0.6;
+const COMPLETE_MIN_COVERAGE: f64 = 0.75;
 /// When the line's closing words were actually spoken, a lower coverage still counts as complete.
-const COMPLETE_TAIL_COVERAGE: f64 = 0.4;
+const COMPLETE_TAIL_COVERAGE: f64 = 0.50;
 /// Coverage of the active line required when the speaker has plainly begun the next line.
-const COMPLETE_NEXT_START_COVERAGE: f64 = 0.3;
+const COMPLETE_NEXT_START_COVERAGE: f64 = 0.35;
 /// Coverage + closing word required to complete a line from the *interim* transcript, before the
 /// endpointing pause. High enough that an unfinished sentence cannot skip a line, but low enough
 /// to fire within an interim of hearing the line's final word (so the highlight leads, not lags).
@@ -528,6 +528,32 @@ impl Tracker {
         self.active
     }
 
+    pub fn last_completed(&self) -> Option<(i32, Instant)> {
+        self.last_completed
+    }
+
+    /// Checks whether the given text strongly matches variants of the specified line.
+    pub fn matches_line_tokens(&self, line_id: i32, text: &str) -> bool {
+        let t = tokens(text);
+        if t.is_empty() {
+            return false;
+        }
+        let Some((idx, _)) = self.lines.iter().enumerate().find(|(_, l)| l.id == line_id) else {
+            return false;
+        };
+        for var in &self.line_variants[idx] {
+            if var.is_empty() {
+                continue;
+            }
+            let hits = count_hits(&t, var);
+            let cov = hits as f64 / var.len() as f64;
+            if hits >= 2 && cov >= 0.25 {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn spoken_buffer(&self) -> String {
         let mut parts: Vec<String> = self.window.iter().cloned().collect();
         let partial = self.partial.trim();
@@ -688,7 +714,8 @@ impl Tracker {
                     || spoken.contains(&stem(t))
                     || spoken.iter().any(|s| words_match(s, t))
             });
-            if (coverage >= LIVE_COMPLETE_COVERAGE && tail_present) || coverage >= 0.85 {
+            // Auto-advance as soon as line reaches 80% completion (or 70% with closing tail words)
+            if (coverage >= LIVE_COMPLETE_COVERAGE && tail_present) || coverage >= 0.80 {
                 return true;
             }
         }
@@ -759,62 +786,67 @@ impl Tracker {
 
         // Eager forward tracking: the opening of the NEXT line may pull the highlight forward
         // before the utterance is finalized, but ONLY once the active line is substantially
-        // delivered and its closing cadence is present. Without this gate the highlight jumped
-        // to N+1 on the first couple of words or when the user was ~70% through line N.
+        // delivered and its closing cadence is present, OR if the speaker has clearly moved on
+        // and is reading the opening words of the next line.
         let active_progress = self.active_progress();
         let tail_ready = self.active_tail_present();
-        if active_progress >= EAGER_MIN_ACTIVE_PROGRESS && (tail_ready || active_progress >= 0.88) {
-            let next_line_opt = self
-                .lines
-                .iter()
-                .enumerate()
-                .skip_while(|(_, l)| l.id <= self.active)
-                .find(|(i, _)| self.line_variants[*i].iter().any(|v| !v.is_empty()));
+        let next_line_opt = self
+            .lines
+            .iter()
+            .enumerate()
+            .skip_while(|(_, l)| l.id <= self.active)
+            .find(|(i, _)| self.line_variants[*i].iter().any(|v| !v.is_empty()));
 
-            if let Some((next_idx, next_line)) = next_line_opt {
-                let next_vars = &self.line_variants[next_idx];
-                let recent_text = if !self.partial.trim().is_empty() {
-                    self.partial.clone()
-                } else {
-                    self.window
-                        .iter()
-                        .rev()
-                        .take(6)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                };
-                let recent_tokens = tokens(&recent_text);
-                if !recent_tokens.is_empty() {
-                    let next_best_hits = next_vars
-                        .iter()
-                        .map(|v| count_hits(&recent_tokens, v))
-                        .max()
-                        .unwrap_or(0);
-                    let curr_idx = self
-                        .lines
-                        .iter()
-                        .position(|l| l.id == self.active)
-                        .unwrap_or(0);
-                    let curr_hits = self.line_variants[curr_idx]
-                        .iter()
-                        .map(|v| count_hits(&recent_tokens, v))
-                        .max()
-                        .unwrap_or(0);
-                    let next_best_len = next_vars
-                        .iter()
-                        .find(|v| count_hits(&recent_tokens, v) == next_best_hits)
-                        .map(|v| v.len())
-                        .unwrap_or(1)
-                        .max(1);
-                    let next_coverage = next_best_hits as f64 / next_best_len as f64;
+        if let Some((next_idx, next_line)) = next_line_opt {
+            let next_vars = &self.line_variants[next_idx];
+            let recent_text = if !self.partial.trim().is_empty() {
+                self.partial.clone()
+            } else {
+                self.window
+                    .iter()
+                    .rev()
+                    .take(6)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            };
+            let recent_tokens = tokens(&recent_text);
+            if !recent_tokens.is_empty() {
+                let next_best_hits = next_vars
+                    .iter()
+                    .map(|v| count_hits(&recent_tokens, v))
+                    .max()
+                    .unwrap_or(0);
+                let curr_idx = self
+                    .lines
+                    .iter()
+                    .position(|l| l.id == self.active)
+                    .unwrap_or(0);
+                let curr_hits = self.line_variants[curr_idx]
+                    .iter()
+                    .map(|v| count_hits(&recent_tokens, v))
+                    .max()
+                    .unwrap_or(0);
+                let next_best_len = next_vars
+                    .iter()
+                    .find(|v| count_hits(&recent_tokens, v) == next_best_hits)
+                    .map(|v| v.len())
+                    .unwrap_or(1)
+                    .max(1);
+                let next_coverage = next_best_hits as f64 / next_best_len as f64;
 
-                    // The speaker must actually be into the next line, and more into it than
-                    // into the current one, before the highlight leads them there.
-                    let min_lead_hits = if next_best_len <= 2 { next_best_len } else { 3 };
-                    if next_best_hits >= min_lead_hits && next_best_hits > curr_hits && next_coverage >= 0.25 {
-                        return Some((next_line.id, false, 2.0 + next_best_hits as f64));
-                    }
+                // The speaker must actually be into the next line, and more into it than
+                // into the current one, before the highlight leads them there.
+                let min_lead_hits = if next_best_len <= 2 { next_best_len } else { 3 };
+                let speaker_clearly_on_next = next_best_hits >= min_lead_hits
+                    && next_best_hits > curr_hits
+                    && next_coverage >= 0.20;
+
+                let active_mostly_done = active_progress >= 0.60 && (tail_ready || active_progress >= 0.75);
+
+                if speaker_clearly_on_next || (active_mostly_done && next_best_hits >= 2) {
+                    let confident = speaker_clearly_on_next && (active_progress >= 0.50 || next_best_hits >= 4);
+                    return Some((next_line.id, confident, 2.0 + next_best_hits as f64));
                 }
             }
         }
@@ -831,6 +863,17 @@ impl Tracker {
                 let mut best_len = variants.first().map(|v| v.len()).unwrap_or(0);
 
                 for var in variants {
+                    // Delayed echo guard: never score the immediate line just completed
+                    // within the last 2.5 seconds (prevents the delayed final transcript from pulling tracker back
+                    // and prevents it from masking upcoming lines).
+                    if let Some((completed_id, completed_at)) = self.last_completed {
+                        if line.id == completed_id
+                            && completed_at.elapsed() < std::time::Duration::from_millis(2500)
+                        {
+                            continue;
+                        }
+                    }
+
                     let mut score = 0.0;
                     let mut hits = 0usize;
                     for token in &buffer {
@@ -881,15 +924,6 @@ impl Tracker {
             best_hits as f64 / best_tokens as f64
         };
 
-        // Delayed echo guard: never bounce backwards to the immediate line just completed
-        // within the last 2 seconds (stops the final ASR transcript of that line from bouncing back).
-        if let Some((completed_id, completed_at)) = self.last_completed {
-            if best_id == completed_id && completed_at.elapsed() < std::time::Duration::from_secs(2)
-            {
-                return None;
-            }
-        }
-
         let second = scored.get(1).map(|(_, score, _, _)| *score).unwrap_or(0.0);
 
         // Forward sequence: active -> active + 1 leads slightly easier.
@@ -924,7 +958,7 @@ impl Tracker {
         // Forward gate: while the active line is still mostly unspoken, a proposal for the next
         // line must be unmistakable (the speaker has clearly moved on) or the highlight holds.
         if is_next_line && active_progress < EAGER_MIN_ACTIVE_PROGRESS {
-            confident = best_hits >= 3 && coverage >= 0.35;
+            confident = (best_hits >= 3 && coverage >= 0.20) || best_hits >= 4;
         }
 
         Some((best_id, confident, best))
@@ -1804,9 +1838,9 @@ mod tests {
     #[test]
     fn fixture_loads_both_calls() {
         let call1 = load_script_by_type("call1").unwrap();
-        assert_eq!(call1.lines.len(), 31);
+        assert_eq!(call1.lines.len(), 33);
         assert_eq!(call1.lines[0].id, 1);
-        assert_eq!(call1.lines[30].id, 31);
+        assert_eq!(call1.lines[32].id, 33);
 
         let call2 = load_script_by_type("call2").unwrap();
         assert_eq!(call2.lines.len(), 24);
@@ -1817,7 +1851,7 @@ mod tests {
     #[test]
     fn coldcall_fixture_loads_with_name_and_niche_placeholders() {
         let cold = load_script_by_type("coldcall").unwrap();
-        assert_eq!(cold.lines.len(), 22);
+        assert_eq!(cold.lines.len(), 24);
         assert_eq!(cold.lines[0].id, 1);
         assert!(cold.lines.iter().any(|l| l.body.contains("[Prospect Name]")));
     }
@@ -1844,9 +1878,9 @@ mod tests {
         assert_eq!(id1, 1);
         assert!(confident1);
 
-        // Advance to Turn 2 (Line 2: On-Site Check)
-        t.consider(2, true);
-        assert_eq!(t.active_id(), 2);
+        // Advance to Turn 2 (Line 3: The Hook & Assumption)
+        t.consider(3, true);
+        assert_eq!(t.active_id(), 3);
 
         // Line 3: The Hook & Assumption
         t.reanchor();
@@ -1882,19 +1916,19 @@ mod tests {
         let mut t = tracker();
         t.push_text("high value client calls while on site at eight pm who catches that");
         let (id, confident, _) = t.local_match().expect("should match");
-        assert_eq!(id, 16);
+        assert_eq!(id, 15);
         assert!(confident, "a distinctive paraphrase should be confident");
     }
 
     #[test]
     fn local_match_finds_call1_project_photos_line() {
         let mut t = tracker();
-        // The spoken body of line 14: "What happens to those right now—do they mostly just sit there?"
-        // (The old input blended in line 13's "photos of past projects" and only matched line 14
+        // The spoken body of line 13: "What happens to those right now—do they mostly just sit there?"
+        // (The old input blended in line 12's "photos of past projects" and only matched line 13
         // through its *label*, which is exactly the contamination this matcher no longer allows.)
         t.push_text("what happens to those right now do they mostly just sit there");
         let (id, _, _) = t.local_match().expect("should match");
-        assert_eq!(id, 14);
+        assert_eq!(id, 13);
     }
 
     #[test]
@@ -1998,13 +2032,13 @@ mod tests {
         let mut t = Tracker::new(script.lines).unwrap();
         assert_eq!(t.active_id(), 1);
 
-        // Speaker jumps directly from line 1 to line 16 (high-value client calls)
+        // Speaker jumps directly from line 1 to line 15 (high-value client calls)
         t.push_text("high value client calls while on site at eight pm who catches that");
-        let (id, confident, _) = t.local_match().expect("should match line 16");
-        assert_eq!(id, 16);
+        let (id, confident, _) = t.local_match().expect("should match line 15");
+        assert_eq!(id, 15);
         assert!(confident, "strong multi-word jump must be confident");
-        assert_eq!(t.consider(id, confident), Some(16));
-        assert_eq!(t.active_id(), 16);
+        assert_eq!(t.consider(id, confident), Some(15));
+        assert_eq!(t.active_id(), 15);
     }
 
     #[test]
@@ -2048,7 +2082,7 @@ mod tests {
         for _ in 0..50 {
             t.manual(1);
         }
-        assert_eq!(t.active_id(), 31);
+        assert_eq!(t.active_id(), 33);
     }
 
     #[test]
@@ -2061,10 +2095,10 @@ mod tests {
     #[test]
     fn a_single_shared_word_is_not_confident_evidence() {
         let mut t = tracker();
-        // Only "driving" overlaps line 17's "driving out to tire-kickers".
-        t.push_text("my cousin is driving down from Ohio next weekend");
+        // Only "wasted" overlaps line 16's "already wasted time calling them back".
+        t.push_text("my cousin wasted the entire weekend in Ohio");
         let (id, confident, _) = t.local_match().expect("there is some overlap");
-        assert_eq!(id, 17);
+        assert_eq!(id, 16);
         assert!(
             !confident,
             "one shared word must not count as a confident line match"
@@ -2083,10 +2117,10 @@ mod tests {
     #[test]
     fn two_incidental_words_are_not_enough_coverage() {
         let mut t = tracker();
-        // "driving" and "back" both appear in line 17, but together they cover about a fifth.
-        t.push_text("my cousin is driving down from Ohio and back");
+        // "driving" and "back" both appear in line 16, but together they cover about a fifth.
+        t.push_text("my cousin is driving from Ohio and back");
         let (id, confident, _) = t.local_match().expect("some overlap");
-        assert_eq!(id, 17);
+        assert_eq!(id, 16);
         assert!(
             !confident,
             "low coverage must not be treated as a confident match"
@@ -2300,7 +2334,7 @@ mod tests {
         assert_eq!(t.active_id(), 3);
         assert_eq!(
             t.on_utterance_final(
-                "every firm runs their day to day differently so i dont even know where ai makes the most sense for you yet"
+                "so for the next eight minutes the agenda is simple i am going to ask you a couple of specific questions to address the operational problems we see firms at your size face"
             ),
             Some(4)
         );
@@ -2394,9 +2428,9 @@ mod tests {
 
     #[test]
     fn cue_markers_never_become_spoken_words() {
-        // Line 6 carries `[⏸️ PAUSE 1s]` and `[🐢 SLOW & LOW]`; none may survive into matching.
+        // Line 5 carries `[⏸️]` and `[🐢]`; none may survive into matching.
         let script = load_script_by_type("call1").unwrap();
-        let line = script.lines.iter().find(|l| l.id == 6).unwrap();
+        let line = script.lines.iter().find(|l| l.id == 5).unwrap();
         let words = body_tokens(line);
         for marker in ["pause", "slow", "down", "curious"] {
             assert!(
@@ -2460,5 +2494,110 @@ mod tests {
         assert!(vocab.iter().any(|v| v.eq_ignore_ascii_case("gagan")));
         assert!(vocab.iter().any(|v| v.eq_ignore_ascii_case("denmark")));
         assert!(vocab.iter().any(|v| v.eq_ignore_ascii_case("operations")));
+    }
+
+    #[test]
+    fn audit_call_upcoming_line_leads_smoothly_without_backward_jump() {
+        let script = load_script_by_type("call1").unwrap();
+        let mut t = Tracker::new(script.lines).unwrap();
+        assert_eq!(t.active_id(), 1);
+
+        // 1. User delivers Line 1
+        t.set_partial("good to meet you appreciate you carving out ten minutes");
+        assert!(t.active_line_spoken_out());
+        assert_eq!(t.complete_active(), Some(2));
+        assert_eq!(t.active_id(), 2);
+
+        // Delayed final of Line 1 arrives:
+        let stale_echo = "good to meet you appreciate you carving out ten minutes";
+        if let Some((comp_id, _)) = t.last_completed() {
+            if !t.matches_line_tokens(comp_id, stale_echo) {
+                t.push_text(stale_echo);
+            }
+        }
+        t.clear_partial();
+
+        // 2. User starts delivering upcoming Line 2
+        t.set_partial("just to set the stage so we use our time well");
+        let (match_id, _, _) = t.local_match().expect("should match line 2");
+        assert_eq!(match_id, 2, "must match line 2, NEVER bounce back to line 1");
+        assert_eq!(t.active_id(), 2);
+
+        // Line 2 completes
+        t.set_partial("just to set the stage so we use our time well i'm not here to pitch you anything today");
+        assert!(t.active_line_spoken_out());
+        assert_eq!(t.complete_active(), Some(3));
+        assert_eq!(t.active_id(), 3);
+
+        // Delayed final of Line 2 arrives:
+        let stale_echo_2 = "just to set the stage so we use our time well i'm not here to pitch you anything today";
+        if let Some((comp_id, _)) = t.last_completed() {
+            if !t.matches_line_tokens(comp_id, stale_echo_2) {
+                t.push_text(stale_echo_2);
+            }
+        }
+        t.clear_partial();
+
+        // 3. User begins upcoming Line 3: "So for the next 8 minutes, the agenda is simple..."
+        t.set_partial("so for the next eight minutes the agenda is simple");
+        let (match_id_3, _, _) = t.local_match().expect("should match line 3");
+        assert_eq!(match_id_3, 3, "must match line 3, NEVER bounce back to line 2 or 1");
+
+        // Line 3 completes
+        t.set_partial("so for the next eight minutes the agenda is simple i am going to ask you a couple of specific questions to address the operational problems we see firms at your size face");
+        assert!(t.active_line_spoken_out());
+        assert_eq!(t.complete_active(), Some(4));
+        assert_eq!(t.active_id(), 4);
+
+        // 4. User starts upcoming Line 4: "From how high-ticket inquiries slip to voicemail on site..."
+        t.set_partial("from how high ticket inquiries slip to voicemail on site");
+        let (match_id_4, _, _) = t.local_match().expect("should match line 4");
+        assert_eq!(match_id_4, 4, "must match line 4, NEVER bounce back to earlier lines");
+    }
+
+    #[test]
+    fn deliberate_backward_reread_commits_on_confident_match() {
+        let script = load_script_by_type("call1").unwrap();
+        let mut t = Tracker::new(script.lines).unwrap();
+        t.move_to_index(2);
+        assert_eq!(t.active_id(), 3);
+
+        // Speaker intentionally re-reads Line 1
+        t.set_partial("good to meet you appreciate you carving out ten minutes");
+        let (proposed, confident, _) = t.local_match().expect("must match line 1 on intentional re-read");
+        assert_eq!(proposed, 1);
+        assert!(confident, "intentional re-read with full sentence is confident");
+        assert_eq!(t.consider(proposed, confident), Some(1));
+        assert_eq!(t.active_id(), 1);
+    }
+
+    #[test]
+    fn eighty_percent_line_spoken_advances_to_next_line() {
+        let script = load_script_by_type("call1").unwrap();
+        let mut t = Tracker::new(script.lines).unwrap();
+        assert_eq!(t.active_id(), 1);
+
+        // Line 1 tokens: "good", "meet", "appreciate", "carving", "ten", "minutes" (6 content words)
+        // 83.3% delivery (5 of 6 content words): "good to meet you appreciate you carving out ten"
+        t.set_partial("good to meet you appreciate you carving out ten");
+        // With 83% (>= 80%) coverage, active line is completed live
+        assert!(t.active_line_spoken_out(), "80% coverage should satisfy line completion");
+        let next = t.complete_active();
+        assert_eq!(next, Some(2), "must strictly advance to sequential next line (2)");
+        assert_eq!(t.active_id(), 2);
+    }
+
+    #[test]
+    fn ambiguous_or_mumbled_speech_holds_position_on_active_line() {
+        let script = load_script_by_type("call1").unwrap();
+        let mut t = Tracker::new(script.lines).unwrap();
+        assert_eq!(t.active_id(), 1);
+
+        // Mumbled or unrecognized speech that has coincidental keyword collisions
+        t.push_text("yeah uh huh calls and business whatever");
+        // Must NOT complete line 1
+        assert!(!t.active_line_spoken_out());
+        // Must not commit any jump
+        assert_eq!(t.active_id(), 1);
     }
 }

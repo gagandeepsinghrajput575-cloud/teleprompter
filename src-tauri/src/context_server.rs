@@ -25,7 +25,10 @@ fn handle_prospect_ws(stream: TcpStream, app: &tauri::AppHandle) {
     println!("PROSPECT_WS_CONNECTED");
 
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    if let Ok(mut lock) = CURRENT_PROSPECT_STOP.lock() {
+    {
+        let mut lock = CURRENT_PROSPECT_STOP
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if let Some(prev) = lock.take() {
             prev.store(true, std::sync::atomic::Ordering::SeqCst);
         }
@@ -117,39 +120,79 @@ pub fn current() -> Option<CallContext> {
     CONTEXT.lock().ok().and_then(|slot| slot.clone())
 }
 
+/// Clears lead context back to empty defaults and emits the update to the HUD.
+pub fn clear_context(app: &tauri::AppHandle) {
+    if let Ok(mut slot) = CONTEXT.lock() {
+        *slot = None;
+    }
+    let empty = CallContext::default();
+    let _ = app.emit("call_context", &empty);
+    println!("CALL_CONTEXT_CLEARED");
+}
+
 /// Updates lead details (name, company, niche, employees) while retaining previous values for any omitted field.
+/// Mutates in place under a single lock guard to prevent lost-update races between ports 8765 and 47831.
+/// Ignores empty/whitespace strings so partial updates cannot wipe previously populated fields.
 pub fn update_lead(
     name: Option<String>,
     company: Option<String>,
     niche: Option<String>,
     employees: Option<String>,
 ) -> CallContext {
-    let mut ctx = CONTEXT.lock().ok().and_then(|s| s.clone()).unwrap_or_default();
+    let mut slot = CONTEXT
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let ctx = slot.get_or_insert_with(CallContext::default);
     if let Some(n) = name {
-        ctx.name = n;
+        let trimmed = n.trim();
+        if !trimmed.is_empty() {
+            ctx.name = trimmed.to_string();
+        }
     }
     if let Some(c) = company {
-        ctx.company = c;
+        let trimmed = c.trim();
+        if !trimmed.is_empty() {
+            ctx.company = trimmed.to_string();
+        }
     }
     if let Some(ni) = niche {
-        ctx.niche = ni;
+        let trimmed = ni.trim();
+        if !trimmed.is_empty() {
+            ctx.niche = trimmed.to_string();
+        }
     }
     if let Some(e) = employees {
-        ctx.employees = Some(e);
+        let trimmed = e.trim();
+        if !trimmed.is_empty() {
+            ctx.employees = Some(trimmed.to_string());
+        }
     }
-    if let Ok(mut slot) = CONTEXT.lock() {
-        *slot = Some(ctx.clone());
-    }
-    ctx
+    ctx.clone()
 }
 
 /// Updates just the prospect name (e.g. from lead listener) while retaining any existing company/niche.
+#[allow(dead_code)]
 pub fn update_prospect_name(name: String) -> CallContext {
     update_lead(Some(name), None, None, None)
 }
 
-/// Parses the JSON body of a `/context` request. Pure so it can be unit-tested without sockets.
+/// Parses the JSON or form body of a `/context` request. Pure so it can be unit-tested without sockets.
 pub fn parse_context(body: &[u8]) -> Result<CallContext, String> {
+    if let Ok(lead) = crate::lead::parse_lead(body) {
+        let mut script: Option<String> = None;
+        if let Ok(val) = serde_json::from_slice::<serde_json::Value>(body) {
+            if let Some(s) = val.get("script").and_then(|s| s.as_str()) {
+                script = Some(s.to_string());
+            }
+        }
+        return Ok(CallContext {
+            name: lead.name.unwrap_or_default(),
+            company: lead.company.unwrap_or_default(),
+            niche: lead.niche.unwrap_or_default(),
+            employees: lead.employees,
+            script,
+        });
+    }
     serde_json::from_slice(body).map_err(|e| format!("invalid json: {e}"))
 }
 
@@ -220,6 +263,10 @@ fn read_request(stream: &mut TcpStream) -> Option<(String, String, String)> {
 }
 
 fn handle(mut stream: TcpStream, app: &tauri::AppHandle) {
+    // Set socket timeouts immediately before peek/sniff so an idle TCP connection cannot block the accept loop
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
+    let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(2)));
+
     let mut peek_buf = [0u8; 64];
     let n = stream.peek(&mut peek_buf).unwrap_or(0);
     let peek_str = String::from_utf8_lossy(&peek_buf[..n]);
@@ -248,12 +295,24 @@ fn handle(mut stream: TcpStream, app: &tauri::AppHandle) {
     let method = parts.next().unwrap_or("");
     let path = parts.next().unwrap_or("");
 
-    if method == "GET" && path == "/health" {
-        respond(&mut stream, 200, "{\"ok\":true}");
-        return;
+    if method == "GET" {
+        if path == "/health" {
+            respond(&mut stream, 200, "{\"ok\":true}");
+            return;
+        } else if path == "/context" || path == "/lead" {
+            let body = serde_json::to_string(&current().unwrap_or_default())
+                .unwrap_or_else(|_| "{}".into());
+            respond(&mut stream, 200, &body);
+            return;
+        }
     }
 
     let path = path.trim_end_matches('/');
+    if method == "POST" && (path == "/context/clear" || path == "/lead/clear" || path == "/clear") {
+        clear_context(app);
+        respond(&mut stream, 200, "{\"ok\":true}");
+        return;
+    }
     if method == "POST"
         && (path == "/context"
             || path == "/call/start"

@@ -17,7 +17,7 @@ struct Rule {
 }
 
 /// Ordered most-specific first; ties are resolved in favour of the earlier rule.
-const RULES: &[Rule] = &[
+const COLD_RULES: &[Rule] = &[
     Rule {
         index: 4,
         phrases: &[
@@ -107,6 +107,12 @@ const RULES: &[Rule] = &[
             " up a ladder ",
             " busy ",
             " at work ",
+            " what does the audit require ",
+            " what does the audit involve ",
+            " what do you need from me ",
+            " audit requirement ",
+            " what is required for the audit ",
+            " what is required ",
         ],
     },
     Rule {
@@ -146,9 +152,158 @@ const RULES: &[Rule] = &[
             " receptionist ",
             " i m just the ",
             " the office ",
+            " what is this regarding ",
+            " who is this regarding ",
+            " what is this about ",
+            " what s this about ",
+            " is he expecting ",
+            " expecting the call ",
+            " one of his guys ",
+            " one of the guys ",
+            " in a meeting ",
+            " later today ",
+            " do it today ",
+            " call me today ",
+            " talk today ",
+            " free today ",
+            " lock it in for monday ",
+            " monday ",
         ],
     },
 ];
+
+/// Sales call closing objection rules (Call 1 Audit, Call 2 Close, Custom sales scripts).
+const SALES_RULES: &[Rule] = &[
+    Rule {
+        index: 3,
+        phrases: &[
+            " partner ",
+            " business partner ",
+            " co founder ",
+            " talk to my partner ",
+            " discuss with my partner ",
+            " speak with my partner ",
+            " run this by my partner ",
+            " talk it over ",
+            " my wife ",
+        ],
+    },
+    Rule {
+        index: 2,
+        phrases: &[
+            " burned before ",
+            " past agency ",
+            " agencies in the past ",
+            " lost money ",
+            " burned by ",
+            " bad experience ",
+            " wasted money ",
+            " didn t get results ",
+        ],
+    },
+    Rule {
+        index: 1,
+        phrases: &[
+            " cash flow ",
+            " tight right now ",
+            " too expensive ",
+            " can t afford ",
+            " out of our budget ",
+            " lot of money ",
+            " too much money ",
+            " cost is high ",
+            " how much does it cost ",
+            " what does it cost ",
+            " what s the price ",
+            " price ",
+            " cost ",
+        ],
+    },
+    Rule {
+        index: 4,
+        phrases: &[
+            " next quarter ",
+            " revisit this ",
+            " bad time ",
+            " busy season ",
+            " after the summer ",
+            " next month ",
+            " call me back in a few months ",
+        ],
+    },
+    Rule {
+        index: 5,
+        phrases: &[
+            " send a proposal ",
+            " send the proposal ",
+            " send the contract ",
+            " send over the agreement ",
+            " put it in writing ",
+            " send an agreement ",
+            " review the proposal ",
+            " send me an email ",
+            " email me ",
+        ],
+    },
+    Rule {
+        index: 6,
+        phrases: &[
+            " in house ",
+            " do it ourselves ",
+            " do this ourselves ",
+            " our own team ",
+            " my own team ",
+            " do it on our own ",
+            " build it ourselves ",
+        ],
+    },
+    Rule {
+        index: 7,
+        phrases: &[
+            " how much time ",
+            " how long will it take ",
+            " how much work ",
+            " time commitment ",
+            " how many hours ",
+            " take up my time ",
+        ],
+    },
+    Rule {
+        index: 8,
+        phrases: &[
+            " will this work for us ",
+            " our specific niche ",
+            " we are different ",
+            " our business is unique ",
+            " in our industry ",
+        ],
+    },
+    Rule {
+        index: 9,
+        phrases: &[
+            " guarantee ",
+            " what if it doesn t work ",
+            " what if it fails ",
+            " case studies ",
+            " references ",
+            " track record ",
+            " results guarantee ",
+        ],
+    },
+    Rule {
+        index: 0,
+        phrases: &[
+            " long term contract ",
+            " lock in ",
+            " locked in ",
+            " cancel anytime ",
+            " month to month ",
+            " commitment ",
+            " annual contract ",
+        ],
+    },
+];
+
 
 /// Lowercase, strip punctuation, collapse to single spaces, pad both ends so phrases can be
 /// matched with word boundaries (`" busy "` never matches `" busybody "`).
@@ -168,11 +323,15 @@ fn normalize(text: &str) -> String {
     out
 }
 
-/// Returns the objection index the prospect most likely just raised, if any.
-pub fn classify(text: &str) -> Option<i32> {
+/// Returns the objection index the prospect most likely just raised for the specific call type.
+pub fn classify_for_call(text: &str, call_type: &str) -> Option<i32> {
+    let rules = match call_type {
+        "call1" | "call2" | "sales" | "close" => SALES_RULES,
+        _ => COLD_RULES,
+    };
     let haystack = normalize(text);
     let mut best: Option<(i32, usize)> = None;
-    for rule in RULES {
+    for rule in rules {
         let mut score = 0usize;
         for phrase in rule.phrases {
             if haystack.contains(phrase) {
@@ -182,12 +341,17 @@ pub fn classify(text: &str) -> Option<i32> {
         if score == 0 {
             continue;
         }
-        // Strictly greater: on a tie the earlier (more specific) rule keeps the slot.
         if best.map_or(true, |(_, best_score)| score > best_score) {
             best = Some((rule.index, score));
         }
     }
     best.map(|(index, _)| index)
+}
+
+/// Returns the objection index the prospect most likely just raised, if any.
+#[allow(dead_code)]
+pub fn classify(text: &str) -> Option<i32> {
+    classify_for_call(text, "coldcall")
 }
 
 /// Per-index cooldown so a looping prospect does not re-fire the same card every interim.
@@ -267,17 +431,32 @@ mod tests {
     #[test]
     fn on_site_maps_to_nine() {
         assert_eq!(classify("I'm on site right now, can't talk"), Some(9));
+        assert_eq!(classify("What does the audit require from us?"), Some(9));
     }
 
     #[test]
     fn employee_maps_to_zero() {
         assert_eq!(classify("I'm just the employee here"), Some(0));
+        assert_eq!(classify("What is this regarding?"), Some(0));
+        assert_eq!(classify("Is he expecting the call?"), Some(0));
+        assert_eq!(classify("What is this about?"), Some(0));
+        assert_eq!(classify("Can you call me back later today?"), Some(0));
     }
 
     #[test]
     fn ordinary_conversation_is_not_an_objection() {
         assert_eq!(classify("Yes that sounds fine, go ahead"), None);
         assert_eq!(classify(""), None);
+    }
+
+    #[test]
+    fn sales_call_objections_match_correct_slots() {
+        use super::classify_for_call;
+        assert_eq!(classify_for_call("I need to speak with my partner first", "call2"), Some(3));
+        assert_eq!(classify_for_call("We got burned before by a marketing agency", "sales"), Some(2));
+        assert_eq!(classify_for_call("Our cash flow is very tight right now", "call1"), Some(1));
+        assert_eq!(classify_for_call("Can you send a proposal over to review?", "sales"), Some(5));
+        assert_eq!(classify_for_call("What kind of guarantee or case studies do you have?", "call2"), Some(9));
     }
 
     #[test]

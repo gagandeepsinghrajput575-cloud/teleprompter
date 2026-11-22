@@ -11,6 +11,7 @@ mod apple_stt;
 mod audio;
 mod bare_keys;
 mod keys;
+pub mod llm_gate;
 mod lead;
 #[cfg(target_os = "macos")]
 mod mic_permission;
@@ -23,6 +24,9 @@ mod tracker;
 mod overlay_macos;
 
 mod context_server;
+
+#[cfg(test)]
+mod pipeline_stress_tests;
 
 use tracker::Tracker;
 
@@ -80,9 +84,31 @@ fn cmd_shift_opt() -> Modifiers {
     Modifiers::SHIFT | Modifiers::SUPER | Modifiers::ALT
 }
 
+/// Extension trait to gracefully recover from poisoned mutexes without panicking.
+pub trait MutexExt<T> {
+    fn lock_or_recover(&self) -> std::sync::MutexGuard<'_, T>;
+}
+
+impl<T> MutexExt<T> for std::sync::Mutex<T> {
+    fn lock_or_recover(&self) -> std::sync::MutexGuard<'_, T> {
+        match self.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => {
+                eprintln!("[WARN] Recovered from poisoned mutex");
+                poisoned.into_inner()
+            }
+        }
+    }
+}
+
+/// Archived / deleted cold call objection indices. Pinned to match TypeScript's COLD_DELETED_INDICES.
+pub const COLD_DELETED_INDICES: &[i32] = &[3, 6, 8];
+
 /// Live session state, owned by Tauri and shared with the async event loop.
 struct AppState {
     tracker: Arc<Mutex<Tracker>>,
+    call_type: Arc<Mutex<String>>,
+    objection_lock: Arc<Mutex<Option<std::time::Instant>>>,
     /// RMS of the most recent audio block, stored as f32 bits.
     level: Arc<AtomicU32>,
     /// Stop flag for the *current* session only. Sharing one flag meant a stop followed by
@@ -393,7 +419,7 @@ fn input_probe(kind: String) {
 }
 
 fn emit_active(app: &tauri::AppHandle, tracker: &Arc<Mutex<Tracker>>, id: i32, reason: &str) {
-    let guard = tracker.lock().unwrap();
+    let guard = tracker.lock_or_recover();
     if let Some(line) = guard.lines().iter().find(|l| l.id == id) {
         println!(
             "ACTIVE_LINE id={} label='{}' reason={reason}",
@@ -459,10 +485,6 @@ fn begin_session(
 ) -> Result<SessionInfo, String> {
     let state = app.state::<AppState>();
 
-    if state.audio_tx.lock().unwrap().is_some() {
-        return Err("a session is already running".to_string());
-    }
-
     let engine_mode = engine.as_deref().unwrap_or("apple").to_lowercase();
     let is_apple = engine_mode == "apple";
 
@@ -478,6 +500,20 @@ fn begin_session(
 
     if !is_apple && deepgram_key.is_none() {
         return Err("DEEPGRAM_API_KEY not found in env or Keychain".to_string());
+    }
+
+    let (audio_tx, audio_rx) = mpsc::unbounded_channel();
+    let stop = Arc::new(AtomicBool::new(false));
+
+    // ATOMIC check-and-reserve under a single critical section:
+    // Guarantees no two capture threads or recognizers can ever spawn concurrently.
+    {
+        let mut tx_guard = state.audio_tx.lock_or_recover();
+        if tx_guard.is_some() {
+            return Err("a session is already running".to_string());
+        }
+        *tx_guard = Some(audio_tx.clone());
+        *state.stop.lock_or_recover() = Some(stop.clone());
     }
 
     println!(
@@ -497,23 +533,27 @@ fn begin_session(
             .unwrap_or_else(|| "none".to_string())
     );
 
-    let stop = Arc::new(AtomicBool::new(false));
-    *state.stop.lock().unwrap() = Some(stop.clone());
-
-    let (audio_tx, audio_rx) = mpsc::unbounded_channel();
     // Simulated Call Mode: replay a 16 kHz mono WAV through the pipeline.
-    let stats = match std::env::var("STEALTH_SIMULATE_WAV") {
-        Ok(path) if !path.trim().is_empty() => {
-            audio::replay_wav(&path, audio_tx.clone(), stop.clone(), state.level.clone())?
+    let stats = match (|| -> Result<audio::CaptureStats, String> {
+        match std::env::var("STEALTH_SIMULATE_WAV") {
+            Ok(path) if !path.trim().is_empty() => {
+                audio::replay_wav(&path, audio_tx.clone(), stop.clone(), state.level.clone())
+            }
+            _ => {
+                // Refuse to open a stream that macOS will silently zero out.
+                #[cfg(target_os = "macos")]
+                mic_permission::ensure()?;
+                spawn_capture(device, audio_tx.clone(), state.level.clone(), stop.clone())
+            }
         }
-        _ => {
-            // Refuse to open a stream that macOS will silently zero out.
-            #[cfg(target_os = "macos")]
-            mic_permission::ensure()?;
-            spawn_capture(device, audio_tx.clone(), state.level.clone(), stop.clone())?
+    })() {
+        Ok(s) => s,
+        Err(err) => {
+            state.audio_tx.lock_or_recover().take();
+            state.stop.lock_or_recover().take();
+            return Err(err);
         }
     };
-    *state.audio_tx.lock().unwrap() = Some(audio_tx);
 
     let (stt_tx, mut stt_rx) = mpsc::unbounded_channel();
     let mut actual_is_apple = is_apple;
@@ -535,7 +575,7 @@ fn begin_session(
                 }
             } else {
                 let stop_flag = stop.clone();
-                let vocab = state.tracker.lock().unwrap().vocabulary();
+                let vocab = state.tracker.lock_or_recover().vocabulary();
                 tauri::async_runtime::spawn(async move {
                     apple_stt::run(audio_rx, stt_tx, stop_flag, vocab).await;
                 });
@@ -609,6 +649,8 @@ fn begin_session(
     }
 
     let tracker_arc = state.tracker.clone();
+    let call_type_arc = state.call_type.clone();
+    let objection_lock_arc = state.objection_lock.clone();
     let http = state.http.clone();
     let llm_provider_slot = llm_provider.clone();
     let app_handle: tauri::AppHandle = (*app).clone();
@@ -646,22 +688,60 @@ fn begin_session(
                 });
                 if should_emit {
                     last_rep_obj = Some((obj_idx, now));
+                    *objection_lock_arc.lock_or_recover() = Some(now + Duration::from_secs(14));
                     println!("REP_OBJECTION_PREFIX matched index={obj_idx} text=\"{}\"", transcript.text);
                     let _ = app_handle.emit("objection", obj_idx);
                 }
             }
 
+            // Objection rebuttal lock: while rep delivers an objection, freeze center tracker
+            // to eliminate chaotic jumps caused by rebuttal words matching random script lines.
+            let is_objection_locked = {
+                let lock = objection_lock_arc.lock_or_recover();
+                lock.map_or(false, |until| std::time::Instant::now() < until)
+            };
+
+            if is_objection_locked {
+                tracker_arc.lock_or_recover().clear_partial();
+                continue;
+            }
+
+            // Cold call mode: speech tracking auto-advancement is disabled per user request
+            // to eliminate accidental jumps on overlapping script words. The rep manually clicks
+            // and navigates flowchart cards. Objection detection remains 100% active above.
+            let is_coldcall = {
+                let ct = call_type_arc.lock_or_recover();
+                ct.as_str() == "coldcall"
+            };
+
+            if is_coldcall {
+                tracker_arc.lock_or_recover().clear_partial();
+                continue;
+            }
+
             let mut committed: Option<(i32, &'static str)> = None;
 
             let plan = {
-                let mut tr = tracker_arc.lock().unwrap();
+                let mut tr = tracker_arc.lock_or_recover();
                 if transcript.is_final {
                     println!("STT_FINAL \"{}\"", transcript.text);
                     // Check if current line finished on this finalized utterance:
                     if let Some(next_id) = tr.on_utterance_final(&transcript.text) {
                         committed = Some((next_id, "line-completed"));
                     } else {
-                        tr.push_text(&transcript.text);
+                        // Echo guard: if this finalized transcript matches a line completed
+                        // in the last 2.5 seconds, it is the delayed final of the line we just finished.
+                        // Do NOT push it into self.window to prevent polluting the active line's buffer.
+                        let is_stale_echo = if let Some((completed_id, completed_at)) = tr.last_completed() {
+                            completed_at.elapsed() < std::time::Duration::from_millis(2500)
+                                && tr.matches_line_tokens(completed_id, &transcript.text)
+                        } else {
+                            false
+                        };
+
+                        if !is_stale_echo {
+                            tr.push_text(&transcript.text);
+                        }
                     }
                     tr.clear_partial();
                 } else {
@@ -759,31 +839,46 @@ fn begin_session(
                 }
                 if let Some(id) = proposal {
                     if id != active {
-                        if let Some(new_id) = tracker_arc.lock().unwrap().consider(id, false) {
-                            committed = Some((
-                                new_id,
-                                if decided_by_llm {
-                                    if id > active {
+                        // Strict sequential tracking: only allow LLM proposals that are within sequential reach (active + 1 or active + 2),
+                        // never jump to distant random lines across the script!
+                        if id == active + 1 || id == active + 2 {
+                            if let Some(new_id) = tracker_arc.lock_or_recover().consider(id, false) {
+                                committed = Some((
+                                    new_id,
+                                    if decided_by_llm {
                                         "stage2-llm"
                                     } else {
-                                        "stage2-llm-back"
-                                    }
-                                } else {
-                                    "stage1-local"
-                                },
-                            ));
+                                        "stage1-local"
+                                    },
+                                ));
+                            }
+                        } else {
+                            println!("TRACKER_HOLD active={active} (ignoring out-of-order LLM proposal {id})");
                         }
                     } else {
                         // id == active: Groq explicitly confirmed staying frozen on the active line.
                         println!("TRACKER_FREEZE active={active} confirmed by LLM");
                     }
-                } else if llm_provider_slot.is_none() {
-                    // Only fall back to local hysteresis if NO LLM key is configured.
-                    // When Groq is active and local is confused, FREEZE on the current line.
+                } else if llm_provider_slot.is_none() || llm_failures >= 3 {
+                    // Fall back to local hysteresis if no LLM is configured OR if the LLM circuit breaker is tripped.
                     if let Some((local_id, confident, _)) = local {
-                        if let Some(new_id) = tracker_arc.lock().unwrap().consider(local_id, confident)
-                        {
-                            committed = Some((new_id, "stage1-hysteresis"));
+                        // Strict sequential tracking: unconfident proposals must NEVER jump to distant lines (> active + 1) or backward lines (< active).
+                        // If speech is unclear, unrecognized, or ambiguous, hold position solidly on active.
+                        let allowed = confident || local_id == active || local_id == active + 1;
+                        if allowed {
+                            if let Some(new_id) = tracker_arc.lock_or_recover().consider(local_id, confident)
+                            {
+                                committed = Some((
+                                    new_id,
+                                    if llm_failures >= 3 {
+                                        "stage1-hysteresis-circuit-open"
+                                    } else {
+                                        "stage1-hysteresis"
+                                    },
+                                ));
+                            }
+                        } else {
+                            println!("TRACKER_HOLD active={active} (ignoring unconfident distant proposal {local_id})");
                         }
                     }
                 } else {
@@ -791,7 +886,7 @@ fn begin_session(
                 }
             } else if let Some((id, _, _)) = local {
                 // Stage 1 was unambiguous: commit without paying for a model call.
-                if let Some(new_id) = tracker_arc.lock().unwrap().consider(id, true) {
+                if let Some(new_id) = tracker_arc.lock_or_recover().consider(id, true) {
                     committed = Some((new_id, "stage1-local"));
                 }
             }
@@ -848,12 +943,12 @@ fn end_session(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
     // Take this session's flag and raise it. Because the flag belongs to the session, a
     // following session cannot clear it before this producer has seen it.
-    if let Some(stop) = state.stop.lock().unwrap().take() {
+    if let Some(stop) = state.stop.lock_or_recover().take() {
         stop.store(true, Ordering::Relaxed);
     }
     // Dropping the last remaining sender closes the audio channel, which makes the STT
     // task send CloseStream and return.
-    state.audio_tx.lock().unwrap().take();
+    state.audio_tx.lock_or_recover().take();
     bare_keys::set_listening(false);
     emit_status(app, false, "stopped");
 }
@@ -875,7 +970,7 @@ pub fn spawn_prospect_pipeline(
     let (event_tx, mut event_rx) = mpsc::unbounded_channel::<stt::SttEvent>();
     let vocab = app
         .try_state::<AppState>()
-        .map(|s| s.tracker.lock().unwrap().vocabulary())
+        .map(|s| s.tracker.lock_or_recover().vocabulary())
         .unwrap_or_default();
 
     let deepgram_key = keys::get("DEEPGRAM_API_KEY");
@@ -910,17 +1005,34 @@ pub fn spawn_prospect_pipeline(
             match event {
                 stt::SttEvent::Transcript(t) => {
                     let _ = emit_to.emit("prospect_transcript", t.text.clone());
-                    tail.push(' ');
-                    tail.push_str(&t.text);
+                    let candidate = if tail.is_empty() {
+                        t.text.clone()
+                    } else {
+                        format!("{} {}", tail, t.text)
+                    };
+                    let active_call = emit_to
+                        .try_state::<AppState>()
+                        .map(|s| s.call_type.lock_or_recover().clone())
+                        .unwrap_or_else(|| "coldcall".to_string());
+                    if let Some(index) = objection_detect::classify_for_call(&candidate, &active_call) {
+                        // Suppress cold call objections that are archived or already handled directly on the flowchart sheet (3, 6, 8, 9, 0)
+                        if active_call == "coldcall" && COLD_DELETED_INDICES.contains(&index) {
+                            // Handled natively on the flowchart sheet, skip popup and tracker lock
+                        } else if recent.should_emit(index) {
+                            println!("PROSPECT_OBJECTION ({active_call}) index={index} text=\"{candidate}\"");
+                            if let Some(state) = emit_to.try_state::<AppState>() {
+                                *state.objection_lock.lock_or_recover() = Some(std::time::Instant::now() + Duration::from_secs(14));
+                            }
+                            let _ = emit_to.emit("objection", index);
+                        }
+                    }
+                    if t.is_final {
+                        tail.push(' ');
+                        tail.push_str(&t.text);
+                    }
                     let words: Vec<&str> = tail.split_whitespace().collect();
                     if words.len() > 30 {
                         tail = words[words.len() - 30..].join(" ");
-                    }
-                    if let Some(index) = objection_detect::classify(&tail) {
-                        if recent.should_emit(index) {
-                            println!("PROSPECT_OBJECTION index={index} tail=\"{tail}\"");
-                            let _ = emit_to.emit("objection", index);
-                        }
                     }
                 }
                 stt::SttEvent::Error(err) => eprintln!("PROSPECT_STT_ERROR {err}"),
@@ -1034,21 +1146,33 @@ fn key_status() -> Vec<keys::KeyStatus> {
 
 #[tauri::command]
 fn tracker_snapshot(state: tauri::State<'_, AppState>) -> tracker::TrackerSnapshot {
-    state.tracker.lock().unwrap().snapshot()
+    state.tracker.lock_or_recover().snapshot()
 }
 
 #[tauri::command]
 fn nudge(app: tauri::AppHandle, state: tauri::State<'_, AppState>, delta: i32) -> i32 {
-    let id = state.tracker.lock().unwrap().manual(delta);
+    let id = state.tracker.lock_or_recover().manual(delta);
     emit_active(&app, &state.tracker, id, "manual");
     id
 }
 
 #[tauri::command]
 fn jump_to_line(app: tauri::AppHandle, state: tauri::State<'_, AppState>, id: i32) -> i32 {
-    let new_id = state.tracker.lock().unwrap().jump_to(id);
+    let new_id = state.tracker.lock_or_recover().jump_to(id);
     emit_active(&app, &state.tracker, new_id, "manual-click");
     new_id
+}
+
+#[tauri::command]
+fn set_objection_active(state: tauri::State<'_, AppState>, active: bool) {
+    let mut lock = state.objection_lock.lock_or_recover();
+    if active {
+        *lock = Some(std::time::Instant::now() + Duration::from_secs(14));
+        println!("TRACKER_OBJECTION_LOCK activated via UI");
+    } else {
+        *lock = None;
+        println!("TRACKER_OBJECTION_LOCK released via UI");
+    }
 }
 
 #[tauri::command]
@@ -1058,7 +1182,7 @@ fn audio_level(state: tauri::State<'_, AppState>) -> f32 {
 
 #[tauri::command]
 fn script_lines(state: tauri::State<'_, AppState>) -> Vec<tracker::ScriptLine> {
-    state.tracker.lock().unwrap().lines().to_vec()
+    state.tracker.lock_or_recover().lines().to_vec()
 }
 
 pub fn do_select_script(
@@ -1066,13 +1190,16 @@ pub fn do_select_script(
     tracker_mutex: &Arc<Mutex<Tracker>>,
     call_type: &str,
 ) -> Result<Vec<tracker::ScriptLine>, String> {
+    if let Some(state) = app.try_state::<AppState>() {
+        *state.call_type.lock_or_recover() = call_type.to_string();
+    }
     let script = tracker::load_script_by_type(call_type)?;
     let lines = script.lines.clone();
-    let id = tracker_mutex.lock().unwrap().switch_script(lines.clone());
+    let id = tracker_mutex.lock_or_recover().switch_script(lines.clone());
     emit_active(app, tracker_mutex, id, "script-select");
     let _ = app.emit("script_selected", call_type);
     println!(
-        "SCRIPT_SWITCHED to '{}' lines={}",
+        "SCRIPT_SWITCHED to '{}' ({call_type}) lines={}",
         script.title,
         lines.len()
     );
@@ -1126,21 +1253,21 @@ fn toggle_edit_mode(app: &tauri::AppHandle) {
 
 fn nudge_from_hotkey(app: &tauri::AppHandle, delta: i32) {
     let state = app.state::<AppState>();
-    let id = state.tracker.lock().unwrap().manual(delta);
+    let id = state.tracker.lock_or_recover().manual(delta);
     println!("HOTKEY nudge delta={delta} active={id}");
     emit_active(app, &state.tracker, id, "manual-hotkey");
 }
 
 fn phase_from_hotkey(app: &tauri::AppHandle, delta: i32) {
     let state = app.state::<AppState>();
-    let id = state.tracker.lock().unwrap().jump_phase(delta);
+    let id = state.tracker.lock_or_recover().jump_phase(delta);
     println!("HOTKEY phase delta={delta} active={id}");
     emit_active(app, &state.tracker, id, "manual-phase");
 }
 
 fn reanchor_from_hotkey(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
-    let id = state.tracker.lock().unwrap().reanchor();
+    let id = state.tracker.lock_or_recover().reanchor();
     println!("HOTKEY reanchor active={id}");
     emit_active(app, &state.tracker, id, "manual-reanchor");
 }
@@ -1342,6 +1469,12 @@ fn call_context() -> Option<context_server::CallContext> {
     context_server::current()
 }
 
+/// Clears dialer-pushed prospect context back to empty defaults.
+#[tauri::command]
+fn clear_context(app: tauri::AppHandle) {
+    context_server::clear_context(&app);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_file_logging();
@@ -1404,7 +1537,9 @@ pub fn run() {
             bare_keys_armed,
             system_audio_start,
             system_audio_stop,
-            call_context
+            set_objection_active,
+            call_context,
+            clear_context
         ])
         .on_window_event(|window, event| {
             // Dragging and resizing fire continuously; just record the latest placement and
@@ -1445,6 +1580,8 @@ pub fn run() {
 
             app.manage(AppState {
                 tracker: Arc::new(Mutex::new(tracker)),
+                call_type: Arc::new(Mutex::new("coldcall".to_string())),
+                objection_lock: Arc::new(Mutex::new(None)),
                 level: Arc::new(AtomicU32::new(0)),
                 stop: Mutex::new(None),
                 audio_tx: Mutex::new(None),

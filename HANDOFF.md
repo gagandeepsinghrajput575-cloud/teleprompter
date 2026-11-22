@@ -89,7 +89,7 @@ Needs **Accessibility** permission; ad-hoc signing re-asks after each rebuild. T
 `bare_keys_start`, `bare_keys_stop`, `bare_keys_armed`.
 
 ## Scripts & objections
-- Fixtures: `call1_audit_script.json` (31 lines), `call2_sales_script.json` (24),
+- Fixtures: `call1_audit_script.json` (33 lines), `call2_sales_script.json` (24),
   `coldcall_scalix.json` (**12-line centre flow only**).
 - The Scalix flowchart is modelled as: **centre gold line = the script** (Opening → If
   "what is this regarding" → If "is he expecting" → Introduce → Hook → Leak → Offer → Lock time →

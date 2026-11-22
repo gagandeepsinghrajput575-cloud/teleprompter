@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fillName, needsName } from "./placeholders";
+import { fillName, fillPlaceholders, needsName } from "./placeholders";
 
 describe("the dialer's name placeholders", () => {
   it("fills both brackets with the one name the dialer sends", () => {
@@ -40,6 +40,7 @@ describe("the dialer's name placeholders", () => {
 
   it("reports whether a name is still missing", () => {
     expect(needsName("[Prospect Name], hi")).toBe(true);
+    expect(needsName("[Name], good to meet you")).toBe(true);
     expect(needsName("Mike, hi")).toBe(false);
     // Reusable: a stateful global regex would flip this answer on every second call.
     expect(needsName("[Prospect Name]")).toBe(true);
@@ -87,5 +88,70 @@ describe("the dialer's name placeholders", () => {
         "   "
       )
     ).toBe("crew of 4 to 8 people");
+  });
+
+  describe("fillPlaceholders across scripts (cold call, audit, close)", () => {
+    it("substitutes [Company] and [Company Name] cleanly", () => {
+      const text = "AI architecture specifically for [Company Name] and [Company] domain";
+      expect(fillPlaceholders(text, { company: "Scalix Elite" })).toBe(
+        "AI architecture specifically for Scalix Elite and Scalix Elite domain"
+      );
+    });
+
+    it("substitutes [Niche], [Trade], and [Industry]", () => {
+      const text = "we work with top [niche] specialists and [trade] contractors in [industry]";
+      expect(fillPlaceholders(text, { niche: "residential construction" })).toBe(
+        "we work with top residential construction specialists and residential construction contractors in residential construction"
+      );
+    });
+
+    it("substitutes all four fields ([Prospect Name], [team size], [company], [niche]) simultaneously", () => {
+      const line =
+        "Hey [Prospect Name], I see [Company] is a leading [Niche] firm with roughly [team size] people.";
+      const filled = fillPlaceholders(line, {
+        name: "Lars Jensen",
+        company: "Nordic Byg ApS",
+        niche: "commercial roofing",
+        employees: "12",
+      });
+      expect(filled).toBe(
+        "Hey Lars Jensen, I see Nordic Byg ApS is a leading commercial roofing firm with roughly 12 people."
+      );
+    });
+
+    it("preserves rep instructions untouched while replacing prospect fields", () => {
+      const raw =
+        "\"[Prospect Name], Got it—that's [spell back email address slowly], right?\"";
+      expect(fillPlaceholders(raw, { name: "Mads" })).toBe(
+        "\"Mads, Got it—that's [spell back email address slowly], right?\""
+      );
+    });
+
+    it("P-02 / P-03: normalizes team size by stripping leading qualifiers and redundant trailing units", () => {
+      // Leading qualifier in input does not duplicate the script's "roughly"
+      expect(
+        fillPlaceholders("roughly [team size] staff", { employees: "roughly 5-10" })
+      ).toBe("roughly 5-10 staff");
+      expect(
+        fillPlaceholders("about [team size] people", { employees: "about 8" })
+      ).toBe("about 8 people");
+      expect(
+        fillPlaceholders("roughly [team size] staff", { employees: "approximately 12" })
+      ).toBe("roughly 12 staff");
+
+      // Trailing unit in input does not duplicate the script's "people" or "staff"
+      expect(
+        fillPlaceholders("[team size] people", { employees: "8 people" })
+      ).toBe("8 people");
+      expect(
+        fillPlaceholders("roughly [team size] staff", { employees: "6 staff" })
+      ).toBe("roughly 6 staff");
+      expect(
+        fillPlaceholders("[team size] employees", { employees: "15 employees" })
+      ).toBe("15 employees");
+      expect(
+        fillPlaceholders("[team size] people", { employees: "10 staff staff" })
+      ).toBe("10 people");
+    });
   });
 });

@@ -23,3 +23,7 @@ yarn-error.log*
 
 # rust
 **/*.rs.bk
+
+# Arena scratch dumps
+STEALTHPROMPTER_*.txt
+ARENA_ARGON_PROMPT.md

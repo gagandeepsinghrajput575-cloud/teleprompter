@@ -181,6 +181,9 @@ async fn run_session(
                     Some(Ok(Message::Close(frame))) => {
                         return Err(format!("server closed: {frame:?}"));
                     }
+                    Some(Ok(Message::Ping(payload))) => {
+                        let _ = socket.send(Message::Pong(payload)).await;
+                    }
                     Some(Err(err)) => return Err(format!("socket error: {err}")),
                     None => return Err("socket ended".to_string()),
                     _ => {}
@@ -199,7 +202,7 @@ async fn run_session(
 ///
 /// Returns `false` when the capture side has closed, which means the session is over and
 /// reconnecting would leave a socket nobody is feeding.
-async fn wait_out_backoff(
+pub(crate) async fn wait_out_backoff(
     backoff: Duration,
     audio_rx: &mut UnboundedReceiver<Vec<i16>>,
 ) -> bool {

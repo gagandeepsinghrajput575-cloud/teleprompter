@@ -128,7 +128,7 @@ ad-hoc. Deeper notes: [`HANDOFF.md`](HANDOFF.md).
 
 ### 7. Alex Hormozi Sales Delivery Playbooks
 StealthPrompter comes bundled with two complete, ready-to-use sales playbooks:
-1. **Call 1: The 10-Minute Audit** (`call1_audit_script.json` — 31 lines)
+1. **Call 1: The 10-Minute Audit** (`call1_audit_script.json` — 33 lines)
    - Phase 1: Set the Frame (Consultative agreement)
    - Phase 2: The 4 Discovery Buckets (Past projects, lead flow, personal bottleneck, budget)
    - Phase 3: Clinical Diagnosis (Naming the exact cost of inaction)
@@ -271,7 +271,7 @@ src/
   lib/script.ts        124  script loading and body derivation
   lib/cues.ts           40  cue metadata → badge chips
   fixtures/
-    call1_audit_script.json  Call 1: The 10-Minute Audit (31 lines, 4 phases)
+    call1_audit_script.json  Call 1: The 10-Minute Audit (33 lines, 4 phases)
     call2_sales_script.json  Call 2: 20-Min Prototype & Close (25 lines, 4 phases)
   lib/*.test.ts        147  vitest suites (24 tests)
 ```

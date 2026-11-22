@@ -15,13 +15,12 @@ function tracker(start = 1) {
 }
 
 describe("the fixture is the verbatim Scalix flowchart", () => {
-  it("has the seven centre turns, in order", () => {
+  it("has the centre turns, in order", () => {
     expect(FLOW.center.map((line) => line.turn)).toEqual([
-      "Turn 1", "Turn 2", "Turn 3", "Turn 4", "Turn 5", "Turn 6", "Turn 7",
+      "Turn 1", "Turn 3", "Turn 4", "Turn 5", "Turn 6", "Turn 7",
     ]);
     expect(FLOW.center.map((line) => line.label)).toEqual([
       "Opening",
-      "On-Site / Tools Running",
       "The Hook & Assumption",
       "The Leak & The Offer",
       "Lock the time",
@@ -33,6 +32,7 @@ describe("the fixture is the verbatim Scalix flowchart", () => {
   it("has every branch the call sheet requires", () => {
     const labels = FLOW.branches.map((branch) => branch.label);
     for (const required of [
+      "On-Site / Tools Running",
       "Branch A · Employee on site",
       "What is this regarding?",
       "Path B · Don't take cold calls",
@@ -83,7 +83,7 @@ describe("Tier 0 - rep-first objection openers", () => {
     ["Well using AI", 110],
     ["The issue when you're slammed", 112],
     ["Because we know 80", 111],
-    ["Understood I won't waste", 2],
+    ["Understood I won't waste", 100],
   ];
 
   for (const [opener, expected] of openers) {

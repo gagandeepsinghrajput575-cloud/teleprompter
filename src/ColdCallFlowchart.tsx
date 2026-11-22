@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { fillName } from "./lib/placeholders";
+import { fillPlaceholders } from "./lib/placeholders";
 import {
   appointmentDays,
   isBookingCard,
@@ -15,6 +15,8 @@ type Props = {
   name?: string | null;
   /** Team / employee count from dialer */
   employees?: string | null;
+  company?: string | null;
+  niche?: string | null;
   /** Injectable for deterministic tests and screenshots. */
   now?: Date;
 };
@@ -36,16 +38,28 @@ export default function ColdCallFlowchart({
   onJump,
   name = null,
   employees = null,
+  company = null,
+  niche = null,
   now = new Date(),
 }: Props) {
   const days = appointmentDays(now);
   const cardRefs = useRef(new Map<number, HTMLDivElement>());
+  const centerColRef = useRef<HTMLDivElement | null>(null);
+  const leftColRef = useRef<HTMLDivElement | null>(null);
+  const rightColRef = useRef<HTMLDivElement | null>(null);
 
-  // Centre the active card in its own column. `scrollIntoView` walks up to the nearest
-  // scrollable ancestor, so the three columns stay independent.
+  // Visual centering: smoothly scroll the column container so the active card is centered in view
   useEffect(() => {
-    const element = cardRefs.current.get(activeId);
-    element?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    const activeEl = cardRefs.current.get(activeId);
+    if (!activeEl) return;
+    const col = activeEl.closest(".flow-col") as HTMLElement | null;
+    if (col) {
+      const colRect = col.getBoundingClientRect();
+      const activeRect = activeEl.getBoundingClientRect();
+      const currentRelTop = activeRect.top - colRect.top + col.scrollTop;
+      const targetScroll = currentRelTop - col.clientHeight / 2 + activeEl.offsetHeight / 2;
+      col.scrollTo({ top: Math.max(0, targetScroll), behavior: "smooth" });
+    }
   }, [activeId]);
 
   const register = (id: number) => (node: HTMLDivElement | null) => {
@@ -53,21 +67,32 @@ export default function ColdCallFlowchart({
     else cardRefs.current.delete(id);
   };
 
+  const details = { name, employees, company, niche };
+
   const renderCard = (card: FlowCard, variant: "center" | "branch") => {
     const active = card.id === activeId;
+    const activeIndex = flow.center.findIndex((c) => c.id === activeId);
+    const cardIndex = flow.center.findIndex((c) => c.id === card.id);
+    const isPast =
+      variant === "center" && activeIndex !== -1 && cardIndex !== -1 && cardIndex < activeIndex;
+    const isNext =
+      variant === "center" && activeIndex !== -1 && cardIndex === activeIndex + 1;
+    const state = active ? "active" : isPast ? "past" : "future";
+
     return (
       <div
         key={card.id}
         ref={register(card.id)}
         className={`flow-card flow-card--${variant}`}
         data-active={active ? "true" : "false"}
+        data-state={state}
+        data-next={isNext ? "true" : "false"}
         role="button"
         tabIndex={0}
         aria-current={active ? "step" : undefined}
         onClick={() => onJump(card.id)}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
-            // Space scrolls the column by default, which fights the centred auto-scroll.
             event.preventDefault();
             onJump(card.id);
           }
@@ -79,15 +104,20 @@ export default function ColdCallFlowchart({
         </div>
 
         {variant === "branch" && card.trigger && (
-          <div className="flow-trigger">Prospect: “{fillName(card.trigger, name, employees)}”</div>
+          <div className="flow-trigger">Prospect: “{fillPlaceholders(card.trigger, details)}”</div>
         )}
 
         <div className="flow-copy">
-          {card.beats.map((beat, index) => (
-            <p key={index} className="flow-beat">
-              {fillName(beat, name, employees)}
-            </p>
-          ))}
+          {card.beats.map((beat, index) => {
+            const formattedBeat = isBookingCard(card)
+              ? beat.replace(/\bThursday\b/g, days.dayAfter.weekday)
+              : beat;
+            return (
+              <p key={index} className="flow-beat">
+                {fillPlaceholders(formattedBeat, details)}
+              </p>
+            );
+          })}
         </div>
 
         {isBookingCard(card) && (
@@ -112,19 +142,19 @@ export default function ColdCallFlowchart({
 
   return (
     <div className="flow" data-active-id={activeId}>
-      <div className="flow-col flow-col--side" aria-label="Left objections">
+      <div className="flow-col flow-col--side" ref={leftColRef} aria-label="Left objections">
         {flow.branches
-          .filter((branch) => branch.side === "left")
+          .filter((branch) => branch.side === "left" && !branch.deleted)
           .map((branch) => renderCard(branch, "branch"))}
       </div>
 
-      <div className="flow-col flow-col--center" aria-label="Centre path">
+      <div className="flow-col flow-col--center" ref={centerColRef} aria-label="Centre path">
         {flow.center.map((line) => renderCard(line, "center"))}
       </div>
 
-      <div className="flow-col flow-col--side" aria-label="Right objections">
+      <div className="flow-col flow-col--side" ref={rightColRef} aria-label="Right objections">
         {flow.branches
-          .filter((branch) => branch.side === "right")
+          .filter((branch) => branch.side === "right" && !branch.deleted)
           .map((branch) => renderCard(branch, "branch"))}
       </div>
     </div>

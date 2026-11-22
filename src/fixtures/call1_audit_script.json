@@ -20,92 +20,92 @@
     {
       "id": 3,
       "phase": "PHASE 1: SETTING THE FRAME (MIN 0-1.5)",
-      "label": "Where AI makes sense",
-      "raw": "[⏸️] Every firm runs their day-to-day differently, so I don't even know where AI makes the most sense for you yet [⬇️]."
+      "label": "Agenda: 8 minutes & operational problems",
+      "raw": "[⚡] So for the next 8 minutes, the agenda is simple [⬇️]. I'm going to ask you a couple of specific questions to address the operational problems we see firms at your size face [⬇️]."
     },
     {
       "id": 4,
       "phase": "PHASE 1: SETTING THE FRAME (MIN 0-1.5)",
-      "label": "Walk me through operations",
-      "raw": "[⚡] What I'd love to do for the next 8 minutes is just have you walk me through how your whole firm operates right now [⬇️]."
+      "label": "Voicemail, quoting, admin bleed",
+      "raw": "From how high-ticket inquiries slip to voicemail on site, to ballparking quotes, to the backend admin bleed [⬇️]."
     },
     {
       "id": 5,
       "phase": "PHASE 1: SETTING THE FRAME (MIN 0-1.5)",
-      "label": "Front to backend admin",
-      "raw": "From how clients find you, to how you handle calls and quotes, to the backend admin [⬇️]."
+      "label": "Custom preview promise",
+      "raw": "[⏸️] [🐢] If I see a clear way we can save you hours every week or plug those leaks, I'll map out a custom plan and build a working preview for you to test next time [⬇️]."
     },
     {
       "id": 6,
-      "phase": "PHASE 1: SETTING THE FRAME (MIN 0-1.5)",
-      "label": "Custom preview promise",
-      "raw": "[⏸️] [🐢] If I see a clear way we can save you hours every week or add revenue, I'll map out a custom plan and build a working preview for you to see next time [⬇️]."
-    },
-    {
-      "id": 7,
       "phase": "PHASE 1: SETTING THE FRAME (MIN 0-1.5)",
       "label": "Sound fair",
       "raw": "If I don't see a massive return for you, I'll tell you straight and we'll part ways [⬇️]. [⏸️] Sound fair [🤔]?"
     },
     {
-      "id": 8,
+      "id": 7,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 1: Bird's eye focus",
       "raw": "To start from a bird's-eye view—I saw on your site that you guys focus on [mention 1 specific thing from their website] [⬇️]."
     },
     {
-      "id": 9,
+      "id": 8,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 1: Firm structure",
       "raw": "[⏸️] Walk me through how the firm is structured right now [⬇️]."
     },
     {
-      "id": 10,
+      "id": 9,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 1: Team & typical day",
       "raw": "How many people are on the team, and what does a typical day look like for you personally [🤔]?"
     },
     {
-      "id": 11,
+      "id": 10,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 1: Personal time drain",
       "raw": "[🤔] Got it... and out of everything you're doing day-to-day, what's eating up the most of your personal time right now?"
     },
     {
-      "id": 12,
+      "id": 11,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 2: Front end lead gen",
       "raw": "Okay, let's look at the front end [⬇️]. How are new [listings / remodeling projects] coming in right now [🤔]? Is it mostly word-of-mouth, or are you running your own campaigns?"
     },
     {
-      "id": 13,
+      "id": 12,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 2: Dormant photos",
       "raw": "[🐢] Makes sense [⬇️]. I'm assuming you have a ton of photos of past [properties / projects] sitting on your phone or website, right? [⏸️]"
     },
     {
-      "id": 14,
+      "id": 13,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 2: Do photos sit there",
       "raw": "What happens to those right now—do they mostly just sit there [🤔]?"
     },
     {
-      "id": 15,
+      "id": 14,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 3: Inbound speed",
       "raw": "[🐢] Now walk me through what happens the exact second a new inquiry comes in [⬇️]. [⏸️]"
     },
     {
-      "id": 16,
+      "id": 15,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 3: Catching 8PM inquiries",
       "raw": "Say a high-value client calls or messages while you're [on site / in a viewing] or at 8:00 PM [⬇️]. Who catches that, and how long does it usually take before they're qualified and booked onto your calendar [🤔]?"
     },
     {
-      "id": 17,
+      "id": 16,
       "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
       "label": "Bucket 3: Tire-kickers",
       "raw": "[🤔] Wait, tell me more about that... [⏸️] How many inquiries a week do you think end up being tire-kickers who don't actually have the budget, where you've already wasted time calling them back or driving out [🤔]?"
+    },
+    {
+      "id": 17,
+      "phase": "PHASE 2: 4-BUCKET WALKTHROUGH (MIN 1.5-8)",
+      "label": "Bucket 3: Ballpark estimate",
+      "raw": "[🐢] Right now, when a prospect calls asking \"how much for a full renovation or job\" [⬇️], how do you give them a ballpark estimate without spending an hour calculating it or driving to site [🤔]?"
     },
     {
       "id": 18,
@@ -190,7 +190,18 @@
       "phase": "PHASE 4: LOCK CALL 2 (MIN 9-10)",
       "label": "Lock the time",
       "raw": "[⚡] It'll take me about 24 hours to put your custom build together [⬇️]. Are you in front of your computer tomorrow around 14:30, or is Thursday at 15:00 better [⬇️]?"
+    },
+    {
+      "id": 32,
+      "phase": "PHASE 4: LOCK CALL 2 (MIN 9-10)",
+      "label": "Chaotic customer stress test",
+      "raw": "[Name], as we both know, software companies build generic tools that look great when everything goes by the book [⬇️]. The problem is real customers don't go by the book—they interrupt, they're annoyed, and sometimes they're plain weird [⬇️]. [⏸️] Before tomorrow, think of your two most chaotic customer calls—throw them straight at the AI to see if it's actually reliable [⬇️]. [⏸️]"
+    },
+    {
+      "id": 33,
+      "phase": "PHASE 4: LOCK CALL 2 (MIN 9-10)",
+      "label": "Partner or lead foreman check",
+      "raw": "[🐢] Quick thing before I send the invite—is there anyone else, like a partner or your lead foreman, who should jump on tomorrow's test so they can try to break it too [🤔]?"
     }
   ]
 }
-

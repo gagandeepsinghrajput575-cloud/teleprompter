@@ -37,6 +37,7 @@ export type Script = {
   version: number;
   audience?: string;
   notes?: string;
+  objections?: import("./objections").Objection[];
   lines: ScriptLine[];
 };
 

@@ -84,3 +84,12 @@ export function safeListen<T>(
     )
     .catch(() => () => {});
 }
+
+export function safeStartDragging(): void {
+  if (!isTauri) return;
+  import("@tauri-apps/api/window")
+    .then(({ getCurrentWindow }) => {
+      getCurrentWindow().startDragging().catch(() => {});
+    })
+    .catch(() => {});
+}

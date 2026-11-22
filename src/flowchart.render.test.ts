@@ -20,9 +20,12 @@ describe("ColdCallFlowchart render", () => {
     expect(html.match(/flow-col--side/g)?.length).toBe(2);
   });
 
-  it("renders every centre turn and every branch card", () => {
-    for (const line of [...FLOW.center, ...FLOW.branches]) {
+  it("renders every centre turn and every active branch card", () => {
+    for (const line of [...FLOW.center, ...FLOW.branches.filter((b) => !b.deleted)]) {
       expect(html).toContain(`flow-label">${line.label.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#x27;")}<`);
+    }
+    for (const line of FLOW.branches.filter((b) => b.deleted)) {
+      expect(html).not.toContain(`flow-label">${line.label}<`);
     }
   });
 
@@ -39,10 +42,22 @@ describe("ColdCallFlowchart render", () => {
   it("puts the objection cards on the correct sides", () => {
     const left = html.indexOf("Left objections");
     const right = html.indexOf("Right objections");
-    const pathB = html.indexOf("Path B · Don&#x27;t take cold calls");
+    const branchA = html.indexOf("Branch A · Employee on site");
     const pathD = html.indexOf("Path D · Early reflex brush-off");
-    expect(left).toBeLessThan(pathB);
-    expect(pathB).toBeLessThan(right);
-    expect(right).toBeLessThan(pathD);
+    const pathC = html.indexOf("Path C · Where did you get my number?");
+    const regarding = html.indexOf("What is this regarding?");
+    const auditReq = html.indexOf("Audit requirement");
+    const lockMonday = html.indexOf("Lock in Monday");
+
+    // Left column contains Branch A and Path D (ordered 3rd block on left)
+    expect(left).toBeLessThan(branchA);
+    expect(branchA).toBeLessThan(pathD);
+    expect(pathD).toBeLessThan(right);
+
+    // Right column contains Path C (top of right), Regarding (lower), Audit requirement, and Lock in Monday (last)
+    expect(right).toBeLessThan(pathC);
+    expect(pathC).toBeLessThan(regarding);
+    expect(regarding).toBeLessThan(auditReq);
+    expect(auditReq).toBeLessThan(lockMonday);
   });
 });

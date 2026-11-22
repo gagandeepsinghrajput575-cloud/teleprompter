@@ -39,6 +39,8 @@ export type FlowCard = {
   trigger?: string;
   /** The card to move to once this one is delivered. */
   next: number | null;
+  /** Whether this objection is archived / deleted from the active display. */
+  deleted?: boolean;
 };
 
 export type ColdCallFlow = {
@@ -252,7 +254,7 @@ export class ColdCallTracker {
     const current = this.card(this.active);
     if (current?.next != null) return current.next;
     const index = this.flow.center.findIndex((line) => line.id === this.active);
-    if (index === -1) return this.flow.center[0]?.id ?? null;
+    if (index === -1) return null;
     return this.flow.center[index + 1]?.id ?? null;
   }
 
@@ -265,13 +267,22 @@ export class ColdCallTracker {
     this.history = [this.active];
   }
 
+  private pushHistory(id: number): void {
+    this.history.push(id);
+    if (this.history.length > 64) {
+      this.history.shift();
+    }
+  }
+
   /** Manual tap: always wins, and is remembered so the auto-scroll can follow it. */
   jump(id: number): number {
     if (!this.card(id)) return this.active;
     this.active = id;
     // A deliberate tap releases any objection hold: the rep has chosen where to be.
     this.hold = false;
-    this.history.push(id);
+    // Clear pending interim buffer so speech uttered before the tap doesn't steal the card back
+    this.pendingInterim = [];
+    this.pushHistory(id);
     return this.active;
   }
 
@@ -322,7 +333,7 @@ export class ColdCallTracker {
     const decision = this.decide(text, isFinal);
     if (!decision || decision.id === this.active) return null;
     this.active = decision.id;
-    this.history.push(decision.id);
+    this.pushHistory(decision.id);
     return this.active;
   }
 

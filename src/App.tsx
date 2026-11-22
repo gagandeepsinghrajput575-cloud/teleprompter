@@ -1,8 +1,17 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { isTauri, safeInvoke as invoke, safeListen as listen } from "./lib/tauri";
+import { isTauri, safeInvoke as invoke, safeListen as listen, safeStartDragging } from "./lib/tauri";
 import { cueChips } from "./lib/cues";
-import { OBJECTIONS, objectionFor, type Objection } from "./lib/objections";
+import { getObjectionsForCall, objectionFor, type Objection } from "./lib/objections";
+import { stepLine } from "./lib/navigation";
 import { loadScript, parseAnnotations, type Script } from "./lib/script";
+import { fillPlaceholders } from "./lib/placeholders";
+import {
+  deleteSavedScript,
+  getSavedScripts,
+  parseCustomScript,
+  saveCustomScript,
+  type SavedScriptEntry,
+} from "./lib/customScript";
 import call1Fixture from "./fixtures/call1_audit_script.json";
 import call2Fixture from "./fixtures/call2_sales_script.json";
 import coldcallFixture from "./fixtures/coldcall_scalix.json";
@@ -96,6 +105,10 @@ export default function App() {
     const saved = getStorage("tp.selectedCall");
     return (saved as "call1" | "call2" | "coldcall") || "coldcall";
   });
+  const selectedCallRef = useRef(selectedCall);
+  useEffect(() => {
+    selectedCallRef.current = selectedCall;
+  }, [selectedCall]);
   const [script, setScript] = useState<Script>(() => {
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
@@ -141,6 +154,109 @@ export default function App() {
 
   // Objection battlecard currently shown (⌃0–⌃9), and the prospect context card fields.
   const [objection, setObjection] = useState<Objection | null>(null);
+  const objectionOpen = Boolean(objection);
+
+  // Suggested Jump Protocol State (Zero auto-scroll)
+  const [suggestedJump, setSuggestedJump] = useState<{
+    page: string;
+    label: string;
+    targetId: number;
+  } | null>(null);
+
+  // Sales Call modal state & custom scripts
+  const [salesSubmenu, setSalesSubmenu] = useState(false);
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const [savedScripts, setSavedScripts] = useState<SavedScriptEntry[]>(() => getSavedScripts());
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const activeRef = useRef<HTMLDivElement | null>(null);
+  const blocksRef = useRef<HTMLDivElement | null>(null);
+  const scriptRef = useRef(script);
+  useEffect(() => {
+    scriptRef.current = script;
+  }, [script]);
+
+  // Keep the active line in the vertical optical centre of the scroll container
+  useLayoutEffect(() => {
+    if (selectedCall === "coldcall") return;
+    const container = blocksRef.current;
+    const el = activeRef.current;
+    if (!container || !el || container.clientHeight === 0) return;
+    const cRect = container.getBoundingClientRect();
+    const eRect = el.getBoundingClientRect();
+    const centring = (container.clientHeight - eRect.height) / 2;
+    const target = Math.max(
+      0,
+      container.scrollTop + (eRect.top - cRect.top) - centring
+    );
+    container.scrollTop = target;
+  }, [activeId, selectedCall]);
+
+  const executeJump = useCallback((targetId: number) => {
+    setActiveId(targetId);
+    setSuggestedJump(null);
+    if (isTauri) {
+      invoke("jump_to_line", { id: targetId }).catch(() => undefined);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).closest("input, textarea, select")) return;
+      if (!suggestedJump) return;
+      if (e.key === "m" || e.key === "M") {
+        e.preventDefault();
+        executeJump(suggestedJump.targetId);
+      } else if (e.key === "n" || e.key === "N") {
+        e.preventDefault();
+        setSuggestedJump(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [suggestedJump, executeJump]);
+
+  const loadCustomScript = useCallback((custom: Script) => {
+    setSelectedCall("call2");
+    setStorage("tp.selectedCall", "call2");
+    setScript(custom);
+    setActiveId(custom.lines[0]?.id ?? 1);
+    setSalesSubmenu(false);
+  }, []);
+
+  const handleProcessScriptFile = useCallback(
+    (file: File) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target?.result;
+        if (typeof text === "string") {
+          const parsed = parseCustomScript(file.name, text);
+          const updated = saveCustomScript(file.name, parsed);
+          setSavedScripts(updated);
+          loadCustomScript(parsed);
+        }
+      };
+      reader.readAsText(file);
+    },
+    [loadCustomScript]
+  );
+
+  const handleFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) handleProcessScriptFile(file);
+    },
+    [handleProcessScriptFile]
+  );
+
+  const handleFileDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setIsDraggingFile(false);
+      const file = e.dataTransfer.files?.[0];
+      if (file) handleProcessScriptFile(file);
+    },
+    [handleProcessScriptFile]
+  );
   // Selects the prospect's audio (the dialer call) and the note the backend reports for it.
   const [prospectAudio, setProspectAudio] = useState(false);
   const [prospectNote, setProspectNote] = useState("");
@@ -182,9 +298,20 @@ export default function App() {
     setStorage("tp.prospect", JSON.stringify(prospect));
   }, [prospect]);
 
+  const clearLead = useCallback(() => {
+    const empty = { name: "", company: "", niche: "", employees: "" };
+    setProspect(empty);
+    setStorage("tp.prospect", JSON.stringify(empty));
+    if (isTauri) {
+      invoke("clear_context").catch(() => undefined);
+    }
+  }, []);
+
   useEffect(() => {
     const onShow = listen<number>("objection", (e) => {
-      setObjection(objectionFor(e.payload) ?? null);
+      setObjection(
+        objectionFor(e.payload, selectedCallRef.current, scriptRef.current?.objections) ?? null
+      );
     });
     const onClose = listen("objection_dismiss", () => setObjection(null));
     return () => {
@@ -192,6 +319,10 @@ export default function App() {
       onClose.then((off) => off());
     };
   }, []);
+
+  useEffect(() => {
+    invoke("set_objection_active", { active: Boolean(objection) }).catch(() => undefined);
+  }, [objection]);
 
   // The backend reports whether the system-audio (prospect) tap actually started, and why not.
   useEffect(() => {
@@ -317,14 +448,46 @@ export default function App() {
     return () => window.removeEventListener("pointerdown", probe, { capture: true });
   }, []);
 
+  // Ensure the window has adequate height (>= 720px) so the 3-card stack (past, active, next) fits cleanly
+  useEffect(() => {
+    if (isTauri) {
+      import("@tauri-apps/api/window")
+        .then(({ getCurrentWindow }) => {
+          getCurrentWindow()
+            .innerSize()
+            .then((size) => {
+              if (size.height < 680) {
+                import("@tauri-apps/api/dpi")
+                  .then(({ LogicalSize }) => {
+                    getCurrentWindow()
+                      .setSize(new LogicalSize(Math.max(size.width, 1080), 720))
+                      .catch(() => {});
+                  })
+                  .catch(() => {});
+              }
+            })
+            .catch(() => {});
+        })
+        .catch(() => {});
+    }
+  }, [isTauri]);
+
   // Live pipeline events emitted from Rust. Active-line changes are applied immediately (they
   // drive the highlight and the scroll); the spoken transcript is throttled below because it
   // fires on every interim word and re-rendering the whole list that often adds visible lag.
   useEffect(() => {
     const unlisteners = [
       listen<ActiveBlockEvent>("active_block", (e) => {
+        // Cold call script is tight with overlapping objection phrases:
+        // Fully disable auto-picker in cold call mode so rep manually navigates cards.
+        if (selectedCallRef.current === "coldcall") {
+          return;
+        }
         setActiveId(e.payload.id);
         setReason(e.payload.reason);
+      }),
+      listen<{ page: string; label: string; targetId: number }>("suggested_jump", (e) => {
+        setSuggestedJump(e.payload);
       }),
       listen<StatusEvent>("status", (e) => setStatus(e.payload)),
     ];
@@ -517,18 +680,25 @@ export default function App() {
   // Manual shortcuts & in-window objection triggers (1-9, 0).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.isComposing) return;
       if (e.key === "Escape") {
         setObjection(null);
         return;
       }
-      // Ignore keys while typing in text input fields
-      const tag = (e.target as HTMLElement | null)?.tagName;
+      // Ignore keys while typing in text input fields or contenteditable
+      const target = e.target as HTMLElement | null;
+      if (target?.isContentEditable) return;
+      const tag = target?.tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
 
       // Digits 1-9, 0 trigger objection battlecards (both bare and Ctrl+digit)
       if (/^[0-9]$/.test(e.key) && !e.metaKey && !e.altKey && !e.shiftKey) {
         const idx = parseInt(e.key, 10);
-        setObjection((prev) => (prev?.index === idx ? null : objectionFor(idx) ?? null));
+        setObjection((prev) =>
+          prev?.index === idx
+            ? null
+            : objectionFor(idx, selectedCallRef.current, scriptRef.current?.objections) ?? null
+        );
         return;
       }
 
@@ -539,33 +709,25 @@ export default function App() {
       }
       if (e.key === "ArrowDown" || e.key === "ArrowRight") {
         e.preventDefault();
-        if (isTauri) {
-          invoke("nudge", { delta: 1 })
-            .then((id) => {
-              if (typeof id === "number") setActiveId(id);
-            })
-            .catch(() => undefined);
-        } else {
-          setActiveId((prev) => {
-            const idx = script.lines.findIndex((l) => l.id === prev);
-            return idx >= 0 && idx < script.lines.length - 1 ? script.lines[idx + 1].id : prev;
-          });
-        }
+        const currentScript = scriptRef.current;
+        setActiveId((prev) => {
+          const res = stepLine(currentScript.lines, prev, "down");
+          if (res.moved && isTauri) {
+            invoke("jump_to_line", { id: res.nextId }).catch(() => undefined);
+          }
+          return res.nextId;
+        });
       }
       if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
         e.preventDefault();
-        if (isTauri) {
-          invoke("nudge", { delta: -1 })
-            .then((id) => {
-              if (typeof id === "number") setActiveId(id);
-            })
-            .catch(() => undefined);
-        } else {
-          setActiveId((prev) => {
-            const idx = script.lines.findIndex((l) => l.id === prev);
-            return idx > 0 ? script.lines[idx - 1].id : prev;
-          });
-        }
+        const currentScript = scriptRef.current;
+        setActiveId((prev) => {
+          const res = stepLine(currentScript.lines, prev, "up");
+          if (res.moved && isTauri) {
+            invoke("jump_to_line", { id: res.nextId }).catch(() => undefined);
+          }
+          return res.nextId;
+        });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -574,61 +736,11 @@ export default function App() {
 
   const activeIndex = script.lines.findIndex((line) => line.id === activeId);
   const active = script.lines[activeIndex] ?? script.lines[0];
-  const activeRef = useRef<HTMLDivElement | null>(null);
-  const blocksRef = useRef<HTMLDivElement | null>(null);
-
-  // Keep the active line in the vertical optical centre of the scroll container. This assigns
-  // `scrollTop` directly — a property the webview cannot ignore, unlike `scrollTo({ behavior })`
-  // which can be a no-op — and runs in a layout effect so it measures after the active line's
-  // cue badges have expanded. `.blocks` carries `scroll-behavior: smooth`, so it animates where
-  // supported and snaps instantly where it is not (either way, it *moves*).
-  useLayoutEffect(() => {
-    const container = blocksRef.current;
-    const el = activeRef.current;
-    if (!container || !el || container.clientHeight === 0) return;
-    const cRect = container.getBoundingClientRect();
-    const eRect = el.getBoundingClientRect();
-    const centring = (container.clientHeight - eRect.height) / 2;
-    const target = Math.max(
-      0,
-      container.scrollTop + (eRect.top - cRect.top) - centring
-    );
-    container.scrollTop = target;
-  }, [activeId, selectedCall]);
 
   // Display-only placeholder substitution: the lead's details replace the placeholders in the
   // visible script so the rep never has to decode them. The tracker's own body is untouched, so
   // bracketed placeholders still never count towards line completion.
-  const spokenLine = (text: string) => {
-    let out = text;
-    const name = prospect.name.trim();
-    const company = prospect.company.trim();
-    const niche = prospect.niche.trim();
-    const employees = (prospect.employees ?? "").trim();
-    if (name) {
-      out = out.replace(/\[Name\]/gi, () => name);
-      out = out.replace(/\[Prospect Name\]/gi, () => name);
-      out = out.replace(/\[Owner's First Name\]/gi, () => name);
-    }
-    if (company) out = out.replace(/\[Company\]/gi, () => company);
-    if (niche) out = out.replace(/\[Niche\]/gi, () => niche);
-    if (employees) {
-      out = out.replace(
-        /\[\s*(?:no\.?\s*of\s*employees|employees|number\s+of\s+employees|team\s*size|crew\s*size|staff\s*count|headcount)\s*\]/gi,
-        () => employees
-      );
-    } else {
-      out = out.replace(
-        /\[\s*(?:no\.?\s*of\s*employees|employees|number\s+of\s+employees|team\s*size|crew\s*size|staff\s*count|headcount)\s*\]/gi,
-        () => "4 to 8"
-      );
-    }
-    const first = name.split(/\s+/)[0] ?? "";
-    if (first) out = out.replace(/\[firstname\]/gi, () => first);
-    const domain = company.toLowerCase().replace(/[^a-z0-9]+/g, "");
-    if (domain) out = out.replace(/\[company domain\]/gi, () => domain);
-    return out;
-  };
+  const spokenLine = (text: string) => fillPlaceholders(text, prospect);
 
   const stageLabel = reason.startsWith("stage2")
     ? "STAGE 2 (JEV)"
@@ -638,81 +750,28 @@ export default function App() {
         ? "AUTO"
         : "MANUAL";
 
-  const onDragStart = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      if (!isTauri || !editMode || e.button !== 0) return;
-      if ((e.target as HTMLElement).closest("button, input, select, textarea, a")) return;
-
-      import("@tauri-apps/api/window").then(({ getCurrentWindow, PhysicalPosition }) => {
-        const win = getCurrentWindow();
-        const originX = e.clientX;
-        const originY = e.clientY;
-        const dpr = window.devicePixelRatio || 1;
-        let start: { x: number; y: number } | null = null;
-        let pending: { x: number; y: number } | null = null;
-        let frame = 0;
-
-        const flush = () => {
-          frame = 0;
-          if (!pending) return;
-          const next = new PhysicalPosition(pending.x, pending.y);
-          pending = null;
-          win.setPosition(next).catch((err) => {
-            invoke("drag_probe", { mode: "manual-error", detail: String(err) }).catch(
-              () => undefined
-            );
-          });
-        };
-
-        const move = (ev: PointerEvent) => {
-          if (!start) return;
-          pending = {
-            x: Math.round(start.x + (ev.clientX - originX) * dpr),
-            y: Math.round(start.y + (ev.clientY - originY) * dpr),
-          };
-          if (!frame) frame = requestAnimationFrame(flush);
-        };
-
-        const up = () => {
-          if (frame) cancelAnimationFrame(frame);
-          frame = 0;
-          window.removeEventListener("pointermove", move);
-          window.removeEventListener("pointerup", up);
-          flush();
-        };
-
-        win
-          .outerPosition()
-          .then((pos) => {
-            start = pos;
-            invoke("drag_probe", { mode: "manual", detail: `from ${pos.x},${pos.y}` }).catch(
-              () => undefined
-            );
-            try {
-              e.currentTarget.setPointerCapture(e.pointerId);
-            } catch {
-              // pointer capture fallback
-            }
-            window.addEventListener("pointermove", move);
-            window.addEventListener("pointerup", up, { once: true });
-          })
-          .catch((err) => {
-            invoke("drag_probe", { mode: "no-position", detail: String(err) }).catch(
-              () => undefined
-            );
-          });
-      });
-    },
-    [editMode]
-  );
+  const handleWindowDrag = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    if (
+      (e.target as HTMLElement).closest(
+        "button, input, select, textarea, a, .objection-chip, .line, .flowchart-step, .tree-branch-node, .saved-script-card, .script-dropzone"
+      )
+    ) {
+      return;
+    }
+    safeStartDragging();
+  }, []);
 
   return (
-    <div className="hud" data-edit={editMode} onPointerDown={onDragStart}>
-      {editMode && (
-        <div className="grab" title="Drag to reposition">
-          <span className="grab-dots" />
-        </div>
-      )}
+    <div className="hud" data-edit={editMode}>
+      <div
+        className="drag-handle"
+        data-tauri-drag-region
+        onPointerDown={handleWindowDrag}
+        title="Drag to reposition window"
+      >
+        <span className="drag-dots" data-tauri-drag-region />
+      </div>
 
       {objection && (
         <div className="objection-card">
@@ -721,7 +780,14 @@ export default function App() {
             <span className="objection-label">{objection.label}</span>
             <span className="objection-dismiss">Esc to close</span>
           </div>
-          <div className="objection-body">{spokenLine(objection.rebuttal)}</div>
+          <div className="objection-body">
+            {fillPlaceholders(spokenLine(objection.rebuttal), {
+              name: prospect.name,
+              employees: prospect.employees,
+              company: prospect.company,
+              niche: prospect.niche,
+            })}
+          </div>
           <div className="objection-cue">{objection.cue}</div>
         </div>
       )}
@@ -740,6 +806,14 @@ export default function App() {
               {prospect.employees && (
                 <span className="ctx-employees">👥 {prospect.employees} staff</span>
               )}
+              <button
+                type="button"
+                className="ctx-clear-btn"
+                title="Clear prospect context"
+                onClick={clearLead}
+              >
+                ✕
+              </button>
             </div>
           )}
 
@@ -770,26 +844,120 @@ export default function App() {
             />
           </div>
 
-          <button className="call-card" onClick={() => selectCall("call1")}>
-            <div className="call-card-name">🔍 Call 1: The 10-Minute Audit</div>
-            <div className="call-card-desc">
-              Consultative Frame · 4-Bucket Walkthrough · Clinical Diagnosis · Call 2 Booking
-            </div>
-          </button>
+          {!salesSubmenu ? (
+            <>
+              <button className="call-card" onClick={() => selectCall("coldcall")}>
+                <div className="call-card-name">📞 Cold Call: Scalix Elite</div>
+                <div className="call-card-desc">
+                  Opening · Hook & Assumption · Leak & Offer · Lock the Time · Email & Sign-off
+                </div>
+              </button>
 
-          <button className="call-card" onClick={() => selectCall("call2")}>
-            <div className="call-card-name">💼 Call 2: 20-Min Prototype & Close</div>
-            <div className="call-card-desc">
-              Pain Re-Anchor · 3 Live Prototype Pillars · Soft Close · Starbucks Cashier Pitch
-            </div>
-          </button>
+              <button className="call-card" onClick={() => selectCall("call1")}>
+                <div className="call-card-name">🔍 Audit Call (Call 1: The 10-Minute Audit)</div>
+                <div className="call-card-desc">
+                  Consultative Frame · 4-Bucket Walkthrough · Clinical Diagnosis · Call 2 Booking
+                </div>
+              </button>
 
-          <button className="call-card" onClick={() => selectCall("coldcall")}>
-            <div className="call-card-name">📞 Cold Call: Scalix Elite</div>
-            <div className="call-card-desc">
-              Opening · Hook & Assumption · Leak & Offer · Lock the Time · Email & Sign-off
+              <button className="call-card" onClick={() => setSalesSubmenu(true)}>
+                <div className="call-card-name">💼 Sales Call (Call 2: 20-Min Prototype & Close)</div>
+                <div className="call-card-desc">
+                  Pain Re-Anchor · 3 Live Prototype Pillars · Custom Scripts (.md/.html)
+                </div>
+              </button>
+            </>
+          ) : (
+            <div className="sales-submenu">
+              <button
+                type="button"
+                className="sales-back-btn"
+                onClick={() => setSalesSubmenu(false)}
+              >
+                ← Back to call types
+              </button>
+
+              <div className="sales-actions-row">
+                <button
+                  type="button"
+                  className="sales-action-btn"
+                  onClick={() => {
+                    selectCall("call2");
+                    setSalesSubmenu(false);
+                  }}
+                >
+                  ⭐ Default Sales Script
+                </button>
+                <button
+                  type="button"
+                  className="sales-action-btn"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  📂 Load New Script (.md/.html)
+                </button>
+              </div>
+
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept=".md,.html,.txt"
+                style={{ display: "none" }}
+                onChange={handleFileSelect}
+              />
+
+              <div
+                className={`script-dropzone ${isDraggingFile ? "dragging" : ""}`}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setIsDraggingFile(true);
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault();
+                  setIsDraggingFile(false);
+                }}
+                onDrop={handleFileDrop}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <div className="dropzone-title">📥 Drop .md or .html script here</div>
+                <div className="dropzone-sub">or click to browse from computer</div>
+              </div>
+
+              {savedScripts.length > 0 && (
+                <div className="saved-scripts-container">
+                  <div className="saved-scripts-heading">Previously Saved Custom Scripts</div>
+                  <div className="saved-scripts-list">
+                    {savedScripts.map((entry) => (
+                      <div
+                        key={entry.id}
+                        className="saved-script-card"
+                        onClick={() => loadCustomScript(entry.script)}
+                      >
+                        <div className="saved-script-info">
+                          <span className="saved-script-name">{entry.name}</span>
+                          <span className="saved-script-meta">
+                            {entry.script.lines.length} lines ·{" "}
+                            {new Date(entry.savedAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          className="saved-script-del"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const remaining = deleteSavedScript(entry.id);
+                            setSavedScripts(remaining);
+                          }}
+                          title="Delete script"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-          </button>
+          )}
 
           <div className="mic-selection-box">
             <span className="mic-selection-label">🎙️ Microphone Input (Voice Filtered):</span>
@@ -830,7 +998,7 @@ export default function App() {
       ) : (
         /* Screen 2: Active Teleprompter HUD */
         <>
-          <div className="bar">
+          <div className="bar" data-tauri-drag-region onPointerDown={handleWindowDrag}>
             <span className={status.running ? "dot live" : "dot"} />
             <span className="status">{status.message}</span>
             <button
@@ -895,6 +1063,14 @@ export default function App() {
               {prospect.employees && (
                 <span className="ctx-employees">👥 {prospect.employees} staff</span>
               )}
+              <button
+                type="button"
+                className="ctx-clear-btn"
+                title="Clear prospect context"
+                onClick={clearLead}
+              >
+                ✕
+              </button>
             </div>
           )}
 
@@ -946,7 +1122,7 @@ export default function App() {
           </div>
 
           <div className="objection-chips-row">
-            {OBJECTIONS.map((obj) => (
+            {getObjectionsForCall(selectedCall, script?.objections).map((obj) => (
               <button
                 key={obj.index}
                 type="button"
@@ -970,6 +1146,8 @@ export default function App() {
               }}
               name={prospect?.name}
               employees={prospect?.employees}
+              company={prospect?.company}
+              niche={prospect?.niche}
             />
           ) : (
             <div className="blocks" ref={blocksRef}>
@@ -980,9 +1158,17 @@ export default function App() {
                   <Fragment key={line.id}>
                     {showPhase && <div className="phase">{line.phase}</div>}
                     <div
-                      className="line"
+                      className={`line ${state === "active" && objectionOpen ? "anchor-beacon" : ""}`}
                       data-state={state}
+                      data-line-id={line.id}
                       ref={line.id === activeId ? activeRef : undefined}
+                      onClick={() => {
+                        setActiveId(line.id);
+                        if (isTauri) {
+                          invoke("jump_to_line", { id: line.id }).catch(() => undefined);
+                        }
+                      }}
+                      title="Click to jump to this line"
                     >
                       <div className="line-core">
                         <span className="label">{line.label}</span>
@@ -995,6 +1181,12 @@ export default function App() {
                               </span>
                             ))}
                             <span className="cue reason">{reason}</span>
+                            {objectionOpen && (
+                              <span className="anchor-beacon-badge">
+                                <span className="beacon-pulse-dot" />
+                                Resume here: Step {line.id}
+                              </span>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1033,6 +1225,41 @@ export default function App() {
             <div>line ⌘⇧⌥←→ · section ⌘⇧⌥↑↓ · re-sync ⌘⇧⌥R · close ⌘⇧⌥D</div>
           </div>
         </>
+      )}
+
+      {suggestedJump && (
+        <div
+          className="suggested-jump-pill"
+          onClick={() => executeJump(suggestedJump.targetId)}
+          role="button"
+          tabIndex={0}
+        >
+          <span className="suggested-jump-text">
+            👉 Suggested: <strong>{suggestedJump.page}</strong> · "{suggestedJump.label}"
+          </span>
+          <span className="suggested-jump-actions">
+            <button
+              type="button"
+              className="jump-btn jump-confirm"
+              onClick={(e) => {
+                e.stopPropagation();
+                executeJump(suggestedJump.targetId);
+              }}
+            >
+              M: Jump
+            </button>
+            <button
+              type="button"
+              className="jump-btn jump-dismiss"
+              onClick={(e) => {
+                e.stopPropagation();
+                setSuggestedJump(null);
+              }}
+            >
+              N: Dismiss
+            </button>
+          </span>
+        </div>
       )}
 
       {error && (

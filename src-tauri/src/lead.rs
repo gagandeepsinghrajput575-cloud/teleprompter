@@ -57,7 +57,7 @@ pub struct Lead {
     pub niche: Option<String>,
     #[serde(
         default,
-        alias = "employees",
+        deserialize_with = "deserialize_flexible_string",
         alias = "no_of_employees",
         alias = "no_of_staff",
         alias = "team_size",
@@ -70,9 +70,294 @@ pub struct Lead {
         alias = "numberOfEmployees",
         alias = "employee_count",
         alias = "employeeCount",
-        alias = "headcount"
+        alias = "headcount",
+        alias = "company_size",
+        alias = "companySize",
+        alias = "team",
+        alias = "size",
+        alias = "staff",
+        alias = "number_of_employees"
     )]
     pub employees: Option<String>,
+}
+
+pub fn deserialize_flexible_string<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct FlexibleVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for FlexibleVisitor {
+        type Value = Option<String>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string, integer, or float")
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            let trimmed = v.trim();
+            if trimmed.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(trimmed.to_string()))
+            }
+        }
+
+        fn visit_string<E>(self, v: String) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            let trimmed = v.trim();
+            if trimmed.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(trimmed.to_string()))
+            }
+        }
+
+        fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(Some(v.to_string()))
+        }
+
+        fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(Some(v.to_string()))
+        }
+
+        fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            if v.fract() == 0.0 {
+                Ok(Some((v as i64).to_string()))
+            } else {
+                Ok(Some(v.to_string()))
+            }
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_some<D2>(self, deserializer: D2) -> Result<Self::Value, D2::Error>
+        where
+            D2: serde::Deserializer<'de>,
+        {
+            deserializer.deserialize_any(self)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: serde::de::Error,
+        {
+            Ok(None)
+        }
+    }
+
+    deserializer.deserialize_any(FlexibleVisitor)
+}
+
+const NAME_ALIASES: &[&str] = &[
+    "name", "owner", "owner_name", "ownerName", "prospect", "prospect_name", "prospectName",
+    "first_name", "firstName",
+];
+
+const COMPANY_ALIASES: &[&str] = &[
+    "company", "company_name", "companyName", "business", "business_name",
+];
+
+const NICHE_ALIASES: &[&str] = &["niche", "industry", "trade"];
+
+const EMPLOYEE_ALIASES: &[&str] = &[
+    "employees", "no_of_employees", "no_of_staff", "team_size", "teamSize",
+    "crew_size", "crewSize", "staff_count", "staffCount", "num_employees",
+    "numberOfEmployees", "employee_count", "employeeCount", "headcount",
+    "company_size", "companySize", "team", "size", "staff", "number_of_employees",
+];
+
+fn value_to_string(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        }
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(i.to_string())
+            } else if let Some(u) = n.as_u64() {
+                Some(u.to_string())
+            } else if let Some(f) = n.as_f64() {
+                if f.fract() == 0.0 {
+                    Some((f as i64).to_string())
+                } else {
+                    Some(f.to_string())
+                }
+            } else {
+                Some(n.to_string())
+            }
+        }
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+fn extract_field_from_json(val: &serde_json::Value, aliases: &[&str]) -> Option<String> {
+    if let serde_json::Value::Object(map) = val {
+        for alias in aliases {
+            if let Some(v) = map.get(*alias) {
+                if let Some(s) = value_to_string(v) {
+                    return Some(s);
+                }
+            }
+        }
+        const NESTED_KEYS: &[&str] = &["data", "lead", "context", "payload", "prospect", "contact", "body"];
+        for key in NESTED_KEYS {
+            if let Some(nested) = map.get(*key) {
+                if let Some(s) = extract_field_from_json(nested, aliases) {
+                    return Some(s);
+                }
+            }
+        }
+        for (k, nested) in map {
+            if !NESTED_KEYS.contains(&k.as_str()) && nested.is_object() {
+                if let Some(s) = extract_field_from_json(nested, aliases) {
+                    return Some(s);
+                }
+            }
+        }
+    }
+    None
+}
+
+fn url_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'+' => {
+                decoded.push(b' ');
+                i += 1;
+            }
+            b'%' if i + 2 < bytes.len() => {
+                if let Ok(b) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16) {
+                    decoded.push(b);
+                    i += 3;
+                } else {
+                    decoded.push(bytes[i]);
+                    i += 1;
+                }
+            }
+            b => {
+                decoded.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&decoded).to_string()
+}
+
+fn parse_form_urlencoded(body: &str) -> Vec<(String, String)> {
+    let mut pairs = Vec::new();
+    for part in body.split('&') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some((k, v)) = part.split_once('=') {
+            let key = url_decode(k).trim().to_string();
+            let val = url_decode(v).trim().to_string();
+            pairs.push((key, val));
+        }
+    }
+    pairs
+}
+
+fn extract_field_from_form(pairs: &[(String, String)], aliases: &[&str]) -> Option<String> {
+    for (k, v) in pairs {
+        if v.is_empty() {
+            continue;
+        }
+        let clean_key = if let Some(stripped) = k.strip_prefix("data[").and_then(|s| s.strip_suffix(']')) {
+            stripped
+        } else if let Some(stripped) = k.strip_prefix("lead[").and_then(|s| s.strip_suffix(']')) {
+            stripped
+        } else if let Some(stripped) = k.strip_prefix("data.").or_else(|| k.strip_prefix("lead.")) {
+            stripped
+        } else {
+            k.as_str()
+        };
+
+        for alias in aliases {
+            if clean_key.eq_ignore_ascii_case(alias) {
+                return Some(v.clone());
+            }
+        }
+    }
+    None
+}
+
+pub fn parse_lead(body: &[u8]) -> Result<Lead, String> {
+    if body.is_empty() {
+        return Err("empty body".to_string());
+    }
+
+    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(body) {
+        if val.is_object() {
+            let name = extract_field_from_json(&val, NAME_ALIASES);
+            let company = extract_field_from_json(&val, COMPANY_ALIASES);
+            let niche = extract_field_from_json(&val, NICHE_ALIASES);
+            let employees = extract_field_from_json(&val, EMPLOYEE_ALIASES);
+
+            if name.is_none() && company.is_none() && niche.is_none() && employees.is_none() {
+                if let Ok(direct) = serde_json::from_value::<Lead>(val) {
+                    return Ok(direct);
+                }
+            }
+
+            return Ok(Lead {
+                name,
+                company,
+                niche,
+                employees,
+            });
+        }
+    }
+
+    let text = String::from_utf8_lossy(body);
+    let pairs = parse_form_urlencoded(&text);
+    if !pairs.is_empty() {
+        let name = extract_field_from_form(&pairs, NAME_ALIASES);
+        let company = extract_field_from_form(&pairs, COMPANY_ALIASES);
+        let niche = extract_field_from_form(&pairs, NICHE_ALIASES);
+        let employees = extract_field_from_form(&pairs, EMPLOYEE_ALIASES);
+
+        if name.is_some() || company.is_some() || niche.is_some() || employees.is_some() {
+            return Ok(Lead {
+                name,
+                company,
+                niche,
+                employees,
+            });
+        }
+    }
+
+    Err("invalid lead payload".to_string())
 }
 
 /// Cleans a name for display.
@@ -83,7 +368,12 @@ pub struct Lead {
 pub fn sanitize(raw: &str) -> String {
     let flattened: String = raw
         .chars()
-        .map(|c| if c == '\n' || c == '\r' || c == '\t' { ' ' } else { c })
+        .map(|c| match c {
+            '\n' | '\r' | '\t' => ' ',
+            '[' => '(',
+            ']' => ')',
+            _ => c,
+        })
         .filter(|c| !c.is_control())
         .collect();
     let joined = flattened.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -113,11 +403,21 @@ where
             // call, and a sequential loop cannot be exhausted by a flood of connections.
             for stream in listener.incoming() {
                 match stream {
-                    Ok(stream) => match handle(stream, token.as_deref()) {
-                        Ok(Some(lead)) => on_lead(lead),
-                        Ok(None) => {}
-                        Err(err) => eprintln!("LEAD_ERROR {err}"),
-                    },
+                    Ok(stream) => {
+                        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            handle(stream, token.as_deref())
+                        }));
+                        match res {
+                            Ok(Ok(Some(lead))) => {
+                                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    on_lead(lead);
+                                }));
+                            }
+                            Ok(Ok(None)) => {}
+                            Ok(Err(err)) => eprintln!("LEAD_ERROR {err}"),
+                            Err(_) => eprintln!("LEAD_PANIC caught in request handler"),
+                        }
+                    }
                     Err(err) => eprintln!("LEAD_ACCEPT_ERROR {err}"),
                 }
             }
@@ -138,6 +438,8 @@ fn handle(mut stream: TcpStream, token: Option<&str>) -> Result<Option<Lead>, St
 
     let mut request_line = String::new();
     reader
+        .by_ref()
+        .take(2048)
         .read_line(&mut request_line)
         .map_err(|e| format!("request line: {e}"))?;
     let mut parts = request_line.split_whitespace();
@@ -150,6 +452,8 @@ fn handle(mut stream: TcpStream, token: Option<&str>) -> Result<Option<Lead>, St
     loop {
         let mut line = String::new();
         let read = reader
+            .by_ref()
+            .take(2048)
             .read_line(&mut line)
             .map_err(|e| format!("headers: {e}"))?;
         if read == 0 {
@@ -200,11 +504,11 @@ fn handle(mut stream: TcpStream, token: Option<&str>) -> Result<Option<Lead>, St
         return Err(format!("body read: {err}"));
     }
 
-    let lead: Lead = match serde_json::from_slice(&body) {
+    let lead: Lead = match parse_lead(&body) {
         Ok(lead) => lead,
         Err(err) => {
-            respond(&mut stream, 400, r#"{"error":"body is not JSON"}"#);
-            return Err(format!("invalid lead json: {err}"));
+            respond(&mut stream, 400, r#"{"error":"invalid lead payload"}"#);
+            return Err(format!("invalid lead: {err}"));
         }
     };
 

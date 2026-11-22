@@ -57,4 +57,36 @@ describe("App render", () => {
     expect(html).toContain("blocks");
     expect(html).toContain("Close");
   });
+
+  it("substitutes prospect placeholders into rendered script lines for Call 1 audit", () => {
+    localStorage.setItem("tp.selectedCall", "call1");
+    localStorage.setItem(
+      "tp.prospect",
+      JSON.stringify({
+        name: "Søren Kierkegaard",
+        company: "Danish Craft Byg",
+        niche: "custom carpentry",
+        employees: "7",
+      })
+    );
+    const html = renderToString(createElement(App));
+    expect(html).toContain("Søren Kierkegaard, good to meet you");
+    expect(html).toContain("specifically for Danish Craft Byg");
+  });
+
+  it("substitutes prospect placeholders into rendered flowchart beats for coldcall", () => {
+    localStorage.setItem("tp.selectedCall", "coldcall");
+    localStorage.setItem(
+      "tp.prospect",
+      JSON.stringify({
+        name: "Kasper Hjulmand",
+        company: "Nordic Frames",
+        niche: "timber framing",
+        employees: "9",
+      })
+    );
+    const html = renderToString(createElement(App));
+    expect(html).toContain("Kasper Hjulmand, hi. It&#x27;s Gagan from Scalix Elite");
+    expect(html).toContain("roughly 9 people right now");
+  });
 });

@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{Emitter, Manager};
@@ -107,6 +107,9 @@ pub const COLD_DELETED_INDICES: &[i32] = &[3, 6, 8];
 /// Live session state, owned by Tauri and shared with the async event loop.
 struct AppState {
     tracker: Arc<Mutex<Tracker>>,
+    /// Monotonic counter incremented on every manual jump, hotkey nudge, re-anchor, or script
+    /// switch. Prevents an in-flight Stage 2 LLM response from mutating a re-anchored tracker.
+    tracker_epoch: Arc<AtomicU64>,
     call_type: Arc<Mutex<String>>,
     objection_lock: Arc<Mutex<Option<std::time::Instant>>>,
     /// RMS of the most recent audio block, stored as f32 bits.
@@ -476,6 +479,228 @@ fn spawn_capture(
         .map_err(|e| format!("audio start did not report back: {e}"))?
 }
 
+/// Duration during which a finalized or interim transcript matching `last_completed` is treated
+/// as a delayed echo from the line we just left.
+const STALE_ECHO_WINDOW: Duration = Duration::from_millis(2500);
+
+/// Signed step distance between two line IDs in the currently loaded script order.
+/// Uses index arithmetic rather than raw `to_id - from_id` so non-contiguous scripts
+/// (e.g., Cold Call ID 1 -> ID 3) still measure as step +1.
+pub(crate) fn line_step(lines: &[tracker::ScriptLine], from_id: i32, to_id: i32) -> Option<isize> {
+    let from_idx = lines.iter().position(|l| l.id == from_id)?;
+    let to_idx = lines.iter().position(|l| l.id == to_id)?;
+    Some(to_idx as isize - from_idx as isize)
+}
+
+/// Snapshot produced by `ingest_transcript` when a classification cycle should run.
+pub(crate) struct CyclePlan {
+    pub local: Option<(i32, bool, f64)>,
+    pub buffer: String,
+    pub active: i32,
+    pub candidates: Vec<tracker::ScriptLine>,
+}
+
+pub(crate) enum IngestOutcome {
+    Committed(i32, &'static str),
+    RunCycle(CyclePlan),
+    Idle,
+}
+
+/// Strips the delayed-echo prefix of `last_completed` (within `STALE_ECHO_WINDOW`) while
+/// preserving any unconsumed run-on tail belonging to the active line.
+/// Returns `None` if the entire payload was a pure echo with no remaining content words.
+fn slice_stale_echo_prefix(tr: &Tracker, text: &str) -> Option<String> {
+    if let Some((completed_id, completed_at)) = tr.last_completed() {
+        if completed_at.elapsed() < STALE_ECHO_WINDOW && tr.matches_line_tokens(completed_id, text)
+        {
+            let tail = tr.strip_completed_prefix(completed_id, text);
+            if tail.is_empty() {
+                return None;
+            }
+            return Some(tail);
+        }
+    }
+    Some(text.to_string())
+}
+
+/// Processes one STT transcript (interim or final) against `Tracker` under lock.
+///
+/// Key invariants enforced here:
+/// - **Strip-Before-Evaluate (#2):** Combined run-on transcripts (`[Line N + start of Line N+1]`)
+///   strip Line N's prefix instead of discarding the entire payload, preserving Line N+1's opening
+///   words in both `window` and `active_matched` (for finals) or `partial` (for interims).
+/// - **Live-Advance Spillover Preservation (#2):** When an interim completes Line N while already
+///   carrying opening words of Line N+1, those trailing words immediately seed Line N+1's `partial`.
+pub(crate) fn ingest_transcript(tr: &mut Tracker, text: &str, is_final: bool) -> IngestOutcome {
+    let mut committed: Option<(i32, &'static str)> = None;
+
+    if is_final {
+        println!("STT_FINAL \"{text}\"");
+        match slice_stale_echo_prefix(tr, text) {
+            None => {
+                println!("STT_ECHO_DROPPED (pure delayed echo of completed line)");
+            }
+            Some(effective) => {
+                if effective.len() != text.len() {
+                    println!("STT_RUNON_TAIL_PRESERVED tail=\"{effective}\"");
+                }
+                if let Some(next_id) = tr.on_utterance_final(&effective) {
+                    committed = Some((next_id, "line-completed"));
+                } else {
+                    tr.push_text(&effective);
+                }
+            }
+        }
+        tr.clear_partial();
+    } else {
+        match slice_stale_echo_prefix(tr, text) {
+            None => {
+                // Stale interim still repeating the line we just completed; clear so it
+                // cannot trigger a phantom Stage 1/2 cycle.
+                tr.clear_partial();
+            }
+            Some(effective) => {
+                tr.set_partial(&effective);
+                if tr.active_line_spoken_out() {
+                    let old_active = tr.active_id();
+                    if let Some(next_id) = tr.complete_active() {
+                        // Preserve any immediate run-on words of `next_id` already present
+                        // at the end of the triggering interim.
+                        let tail = tr.strip_completed_prefix(old_active, &effective);
+                        if !tail.is_empty() {
+                            tr.set_partial(&tail);
+                        }
+                        committed = Some((next_id, "line-spoken"));
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some((id, reason)) = committed {
+        return IngestOutcome::Committed(id, reason);
+    }
+
+    if tr.should_run_cycle() {
+        tr.mark_cycle_ran();
+        IngestOutcome::RunCycle(CyclePlan {
+            local: tr.local_match(),
+            buffer: tr.spoken_buffer(),
+            active: tr.active_id(),
+            candidates: tr.all_lines(),
+        })
+    } else {
+        IngestOutcome::Idle
+    }
+}
+
+/// Applies a confident Stage 1 `local_match()` proposal with strict directional guards (#3):
+/// - `step == 0`: confirms active line and resets pending hysteresis votes.
+/// - `step in 1..=2`: commits immediately (strict forward sequential reach clamp).
+/// - `step > 2`: rejected (`TRACKER_HOLD`) so distant keyword collisions never skip ahead.
+/// - `step < 0`: routed through 3-confirmation hysteresis (`consider(id, false)`) instead of
+///   instant 1-hit commit, requiring both Chunk 2's high lexical floor AND 3 consecutive cycles.
+pub(crate) fn apply_stage1_confident(
+    tr: &mut Tracker,
+    proposed_id: i32,
+) -> Option<(i32, &'static str)> {
+    let active = tr.active_id();
+    let Some(step) = line_step(tr.lines(), active, proposed_id) else {
+        return None;
+    };
+
+    match step {
+        0 => {
+            let _ = tr.consider(proposed_id, true);
+            None
+        }
+        1 | 2 => tr
+            .consider(proposed_id, true)
+            .map(|new_id| (new_id, "stage1-local")),
+        s if s > 2 => {
+            println!(
+                "TRACKER_HOLD active={active} (clamping distant Stage 1 forward proposal {proposed_id} step=+{s})"
+            );
+            None
+        }
+        s => {
+            // Backward match passed Chunk 2's high coverage floor; still require 3 consecutive
+            // confirming cycles before committing to prevent short-line backward jitter.
+            let committed = tr.consider(proposed_id, false);
+            if committed.is_none() {
+                println!(
+                    "TRACKER_BACKWARD_PENDING active={active} proposed={proposed_id} step={s}"
+                );
+            }
+            committed.map(|new_id| (new_id, "stage1-local-backward"))
+        }
+    }
+}
+
+/// Applies an unconfident Stage 1 local fallback (only when LLM is absent or circuit-open):
+/// strictly limited to holding active (`step == 0`) or advancing one line (`step == 1`) with
+/// 2-confirmation hysteresis (`consider(local_id, false)`).
+pub(crate) fn apply_stage1_fallback(
+    tr: &mut Tracker,
+    local_id: i32,
+    circuit_open: bool,
+) -> Option<(i32, &'static str)> {
+    let active = tr.active_id();
+    let step = line_step(tr.lines(), active, local_id)?;
+    if step == 0 || step == 1 {
+        let reason = if circuit_open {
+            "stage1-hysteresis-circuit-open"
+        } else {
+            "stage1-hysteresis"
+        };
+        tr.consider(local_id, false).map(|new_id| (new_id, reason))
+    } else {
+        println!(
+            "TRACKER_HOLD active={active} (ignoring unconfident Stage 1 fallback {local_id} step={step})"
+        );
+        None
+    }
+}
+
+/// Applies a Stage 2 LLM proposal after re-verifying that the tracker did not move while the
+/// network call was in flight. Strictly clamped to `step == 1 || step == 2`.
+pub(crate) fn apply_llm_proposal(
+    tr: &mut Tracker,
+    expected_active: i32,
+    proposed_id: i32,
+    decided_by_llm: bool,
+) -> Option<(i32, &'static str)> {
+    if tr.active_id() != expected_active {
+        println!(
+            "TRACKER_LLM_STALE expected_active={expected_active} current_active={} proposed={proposed_id}",
+            tr.active_id()
+        );
+        return None;
+    }
+    let Some(step) = line_step(tr.lines(), expected_active, proposed_id) else {
+        return None;
+    };
+    if step == 0 {
+        println!("TRACKER_FREEZE active={expected_active} confirmed by LLM");
+        let _ = tr.consider(proposed_id, false);
+        return None;
+    }
+    if step == 1 || step == 2 {
+        let reason = if decided_by_llm {
+            "stage2-llm"
+        } else {
+            "stage1-local"
+        };
+        tr.consider(proposed_id, false)
+            .map(|new_id| (new_id, reason))
+    } else {
+        println!(
+            "TRACKER_HOLD active={expected_active} (ignoring out-of-order LLM proposal {proposed_id} step={step})"
+        );
+        None
+    }
+}
+
 /// Starts a session. Kept separate from the command so the app can also autostart
 /// headlessly during verification (`STEALTH_AUTOSTART=1`).
 fn begin_session(
@@ -649,6 +874,7 @@ fn begin_session(
     }
 
     let tracker_arc = state.tracker.clone();
+    let tracker_epoch_arc = state.tracker_epoch.clone();
     let call_type_arc = state.call_type.clone();
     let objection_lock_arc = state.objection_lock.clone();
     let http = state.http.clone();
@@ -719,78 +945,38 @@ fn begin_session(
                 continue;
             }
 
+            let (outcome, epoch_before) = {
+                let mut tr = tracker_arc.lock_or_recover();
+                let epoch = tracker_epoch_arc.load(Ordering::SeqCst);
+                (ingest_transcript(&mut tr, &transcript.text, transcript.is_final), epoch)
+            };
+
+            let plan = match outcome {
+                IngestOutcome::Committed(id, reason) => {
+                    emit_active(&app_handle, &tracker_arc, id, reason);
+                    continue;
+                }
+                IngestOutcome::Idle => continue,
+                IngestOutcome::RunCycle(plan) => plan,
+            };
+
+            let CyclePlan {
+                local,
+                buffer,
+                active,
+                candidates,
+            } = plan;
             let mut committed: Option<(i32, &'static str)> = None;
 
-            let plan = {
-                let mut tr = tracker_arc.lock_or_recover();
-                if transcript.is_final {
-                    println!("STT_FINAL \"{}\"", transcript.text);
-                    // Check if current line finished on this finalized utterance:
-                    if let Some(next_id) = tr.on_utterance_final(&transcript.text) {
-                        committed = Some((next_id, "line-completed"));
-                    } else {
-                        // Echo guard: if this finalized transcript matches a line completed
-                        // in the last 2.5 seconds, it is the delayed final of the line we just finished.
-                        // Do NOT push it into self.window to prevent polluting the active line's buffer.
-                        let is_stale_echo = if let Some((completed_id, completed_at)) = tr.last_completed() {
-                            completed_at.elapsed() < std::time::Duration::from_millis(2500)
-                                && tr.matches_line_tokens(completed_id, &transcript.text)
-                        } else {
-                            false
-                        };
-
-                        if !is_stale_echo {
-                            tr.push_text(&transcript.text);
-                        }
-                    }
-                    tr.clear_partial();
-                } else {
-                    tr.set_partial(&transcript.text);
-                    // Advance the instant the whole active line has been spoken, instead of
-                    // waiting for the ~700ms silence final. Strict enough that it never fires on
-                    // a partial line (see `active_line_spoken_out`).
-                    if tr.active_line_spoken_out() {
-                        if let Some(next_id) = tr.complete_active() {
-                            committed = Some((next_id, "line-spoken"));
-                        }
-                    }
-                }
-                if committed.is_some() {
-                    None
-                } else if tr.should_run_cycle() {
-                    tr.mark_cycle_ran();
-                    Some((
-                        tr.local_match(),
-                        tr.spoken_buffer(),
-                        tr.active_id(),
-                        tr.all_lines(),
-                    ))
-                } else {
-                    None
-                }
-            };
-
-            if let Some((id, reason)) = committed {
-                emit_active(&app_handle, &tracker_arc, id, reason);
-                continue;
-            }
-
-            let Some((local, buffer, active, candidates)) = plan else {
-                continue;
-            };
-
             if tracker::needs_llm(local) {
-                // Stage 2: stage 1 was unsure — a paraphrase, off-script speech, or ambiguity.
-                // Only the model may propose here. Falling back to the unconfident local guess
-                // would let two weak guesses confirm each other and advance the block on
-                // off-script speech, which is exactly what the model is meant to prevent.
                 let mut proposal: Option<i32> = None;
                 let mut decided_by_llm = false;
-                // Groq LPU runs in ~150ms; 250ms throttle provides near-instantaneous routing without flooding.
                 let llm_ready =
                     last_llm.map_or(true, |at| at.elapsed() >= Duration::from_millis(1000));
                 if let Some(ref provider) = llm_provider_slot {
-                    if llm_failures >= 3 && last_llm.map_or(false, |at| at.elapsed() >= Duration::from_secs(20)) {
+                    if llm_failures >= 3
+                        && last_llm.map_or(false, |at| at.elapsed() >= Duration::from_secs(20))
+                    {
                         llm_failures = 0;
                         println!("TRACKER_LLM_RESET circuit breaker reset after quiet cooldown");
                     }
@@ -805,15 +991,23 @@ fn begin_session(
                             "TRACKER_ROUTE stage2-{provider_name} active={active} buffer_words={}",
                             buffer.split_whitespace().count()
                         );
-                        match tracker::classify_with_llm(&http, provider, &candidates, active, &buffer)
-                            .await
+                        match tracker::classify_with_llm(
+                            &http,
+                            provider,
+                            &candidates,
+                            active,
+                            &buffer,
+                        )
+                        .await
                         {
                             Ok(decision) => {
                                 llm_failures = 0;
                                 proposal = decision.choice;
                                 decided_by_llm = true;
                                 if let Some(obj) = decision.objection {
-                                    println!("TRACKER_LLM_OBJECTION ({provider_name}) objection={obj}");
+                                    println!(
+                                        "TRACKER_LLM_OBJECTION ({provider_name}) objection={obj}"
+                                    );
                                     let _ = app_handle.emit("objection", obj);
                                 }
                                 if let Some(id) = decision.choice {
@@ -824,10 +1018,12 @@ fn begin_session(
                             }
                             Err(err) => {
                                 llm_failures += 1;
-                                eprintln!("TRACKER_LLM_ERROR ({provider_name}) n={llm_failures} {err}");
+                                eprintln!(
+                                    "TRACKER_LLM_ERROR ({provider_name}) n={llm_failures} {err}"
+                                );
                                 if err.contains("429") {
-                                    // Rate limit backoff: quench for 5 seconds to recharge token bucket
-                                    last_llm = Some(std::time::Instant::now() + Duration::from_secs(5));
+                                    last_llm =
+                                        Some(std::time::Instant::now() + Duration::from_secs(5));
                                 }
                             }
                         }
@@ -837,57 +1033,43 @@ fn begin_session(
                 } else if verbose {
                     println!("TRACKER_ROUTE stage1-local (no llm key)");
                 }
-                if let Some(id) = proposal {
-                    if id != active {
-                        // Strict sequential tracking: only allow LLM proposals that are within sequential reach (active + 1 or active + 2),
-                        // never jump to distant random lines across the script!
-                        if id == active + 1 || id == active + 2 {
-                            if let Some(new_id) = tracker_arc.lock_or_recover().consider(id, false) {
-                                committed = Some((
-                                    new_id,
-                                    if decided_by_llm {
-                                        "stage2-llm"
-                                    } else {
-                                        "stage1-local"
-                                    },
-                                ));
-                            }
-                        } else {
-                            println!("TRACKER_HOLD active={active} (ignoring out-of-order LLM proposal {id})");
-                        }
-                    } else {
-                        // id == active: Groq explicitly confirmed staying frozen on the active line.
-                        println!("TRACKER_FREEZE active={active} confirmed by LLM");
-                    }
+
+                // Re-verify live guards after the async LLM await: discard if an objection lock,
+                // script switch to coldcall, or manual navigation happened mid-flight.
+                let still_valid = {
+                    let obj_locked = objection_lock_arc
+                        .lock_or_recover()
+                        .map_or(false, |until| std::time::Instant::now() < until);
+                    let switched_to_coldcall =
+                        call_type_arc.lock_or_recover().as_str() == "coldcall";
+                    let same_epoch = tracker_epoch_arc.load(Ordering::SeqCst) == epoch_before;
+                    !obj_locked && !switched_to_coldcall && same_epoch
+                };
+
+                if !still_valid {
+                    println!("TRACKER_LLM_STALE discarding post-await decision (epoch/mode changed)");
+                } else if let Some(id) = proposal {
+                    let mut tr = tracker_arc.lock_or_recover();
+                    committed = apply_llm_proposal(&mut tr, active, id, decided_by_llm);
                 } else if llm_provider_slot.is_none() || llm_failures >= 3 {
-                    // Fall back to local hysteresis if no LLM is configured OR if the LLM circuit breaker is tripped.
-                    if let Some((local_id, confident, _)) = local {
-                        // Strict sequential tracking: unconfident proposals must NEVER jump to distant lines (> active + 1) or backward lines (< active).
-                        // If speech is unclear, unrecognized, or ambiguous, hold position solidly on active.
-                        let allowed = confident || local_id == active || local_id == active + 1;
-                        if allowed {
-                            if let Some(new_id) = tracker_arc.lock_or_recover().consider(local_id, confident)
-                            {
-                                committed = Some((
-                                    new_id,
-                                    if llm_failures >= 3 {
-                                        "stage1-hysteresis-circuit-open"
-                                    } else {
-                                        "stage1-hysteresis"
-                                    },
-                                ));
-                            }
-                        } else {
-                            println!("TRACKER_HOLD active={active} (ignoring unconfident distant proposal {local_id})");
+                    if let Some((local_id, _, _)) = local {
+                        let mut tr = tracker_arc.lock_or_recover();
+                        if tr.active_id() == active {
+                            committed =
+                                apply_stage1_fallback(&mut tr, local_id, llm_failures >= 3);
                         }
                     }
                 } else {
                     println!("TRACKER_FREEZE active={active} (LLM holding position)");
                 }
             } else if let Some((id, _, _)) = local {
-                // Stage 1 was unambiguous: commit without paying for a model call.
-                if let Some(new_id) = tracker_arc.lock_or_recover().consider(id, true) {
-                    committed = Some((new_id, "stage1-local"));
+                // Stage 1 was unambiguous: enforce strict forward clamp (<= +2) and
+                // 3-confirmation hysteresis on any backward jump.
+                let mut tr = tracker_arc.lock_or_recover();
+                if tracker_epoch_arc.load(Ordering::SeqCst) == epoch_before
+                    && tr.active_id() == active
+                {
+                    committed = apply_stage1_confident(&mut tr, id);
                 }
             }
 
@@ -1151,6 +1333,7 @@ fn tracker_snapshot(state: tauri::State<'_, AppState>) -> tracker::TrackerSnapsh
 
 #[tauri::command]
 fn nudge(app: tauri::AppHandle, state: tauri::State<'_, AppState>, delta: i32) -> i32 {
+    state.tracker_epoch.fetch_add(1, Ordering::SeqCst);
     let id = state.tracker.lock_or_recover().manual(delta);
     emit_active(&app, &state.tracker, id, "manual");
     id
@@ -1158,6 +1341,7 @@ fn nudge(app: tauri::AppHandle, state: tauri::State<'_, AppState>, delta: i32) -
 
 #[tauri::command]
 fn jump_to_line(app: tauri::AppHandle, state: tauri::State<'_, AppState>, id: i32) -> i32 {
+    state.tracker_epoch.fetch_add(1, Ordering::SeqCst);
     let new_id = state.tracker.lock_or_recover().jump_to(id);
     emit_active(&app, &state.tracker, new_id, "manual-click");
     new_id
@@ -1191,6 +1375,7 @@ pub fn do_select_script(
     call_type: &str,
 ) -> Result<Vec<tracker::ScriptLine>, String> {
     if let Some(state) = app.try_state::<AppState>() {
+        state.tracker_epoch.fetch_add(1, Ordering::SeqCst);
         *state.call_type.lock_or_recover() = call_type.to_string();
     }
     let script = tracker::load_script_by_type(call_type)?;
@@ -1253,6 +1438,7 @@ fn toggle_edit_mode(app: &tauri::AppHandle) {
 
 fn nudge_from_hotkey(app: &tauri::AppHandle, delta: i32) {
     let state = app.state::<AppState>();
+    state.tracker_epoch.fetch_add(1, Ordering::SeqCst);
     let id = state.tracker.lock_or_recover().manual(delta);
     println!("HOTKEY nudge delta={delta} active={id}");
     emit_active(app, &state.tracker, id, "manual-hotkey");
@@ -1260,6 +1446,7 @@ fn nudge_from_hotkey(app: &tauri::AppHandle, delta: i32) {
 
 fn phase_from_hotkey(app: &tauri::AppHandle, delta: i32) {
     let state = app.state::<AppState>();
+    state.tracker_epoch.fetch_add(1, Ordering::SeqCst);
     let id = state.tracker.lock_or_recover().jump_phase(delta);
     println!("HOTKEY phase delta={delta} active={id}");
     emit_active(app, &state.tracker, id, "manual-phase");
@@ -1267,6 +1454,7 @@ fn phase_from_hotkey(app: &tauri::AppHandle, delta: i32) {
 
 fn reanchor_from_hotkey(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
+    state.tracker_epoch.fetch_add(1, Ordering::SeqCst);
     let id = state.tracker.lock_or_recover().reanchor();
     println!("HOTKEY reanchor active={id}");
     emit_active(app, &state.tracker, id, "manual-reanchor");
@@ -1580,7 +1768,8 @@ pub fn run() {
 
             app.manage(AppState {
                 tracker: Arc::new(Mutex::new(tracker)),
-                call_type: Arc::new(Mutex::new("coldcall".to_string())),
+                tracker_epoch: Arc::new(AtomicU64::new(0)),
+                call_type: Arc::new(Mutex::new("call1".to_string())),
                 objection_lock: Arc::new(Mutex::new(None)),
                 level: Arc::new(AtomicU32::new(0)),
                 stop: Mutex::new(None),
@@ -1972,4 +2161,159 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod arbitration_tests {
+    use super::*;
+    use crate::tracker::{load_script_by_type, Tracker};
+
+    fn call1_tracker() -> Tracker {
+        let script = load_script_by_type("call1").expect("call1 fixture loads");
+        Tracker::new(script.lines).expect("tracker builds")
+    }
+
+    #[test]
+    fn fast_talker_run_on_final_preserves_line_two_opening_instead_of_dropping() {
+        let mut tr = call1_tracker();
+        assert_eq!(tr.active_id(), 1);
+
+        // 1. Interim finishes Line 1 live -> advances to Line 2 with last_completed = (1, now)
+        let out1 = ingest_transcript(
+            &mut tr,
+            "good to meet you appreciate you carving out ten minutes",
+            false,
+        );
+        assert!(matches!(out1, IngestOutcome::Committed(2, "line-spoken")));
+        assert_eq!(tr.active_id(), 2);
+
+        // 2. Fast-talker combined final arrives containing Line 1 + opening half of Line 2.
+        // Previously `is_stale_echo` dropped the ENTIRE transcript, starving Line 2.
+        let combined_final = "good to meet you appreciate you carving out ten minutes just to set the stage so we use our time well";
+        let _ = ingest_transcript(&mut tr, combined_final, true);
+        assert_eq!(tr.active_id(), 2);
+        assert!(
+            tr.spoken_buffer().contains("stage") && !tr.spoken_buffer().contains("carving"),
+            "must preserve Line 2 tail while stripping Line 1 echo: '{}'",
+            tr.spoken_buffer()
+        );
+
+        // 3. Second half of Line 2 completes cleanly -> Line 3
+        let out3 = ingest_transcript(&mut tr, "I'm not here to pitch you anything today", true);
+        assert!(matches!(out3, IngestOutcome::Committed(3, "line-completed")));
+        assert_eq!(tr.active_id(), 3);
+    }
+
+    #[test]
+    fn pure_delayed_echo_after_live_advance_is_dropped_cleanly() {
+        let mut tr = call1_tracker();
+        let out1 = ingest_transcript(
+            &mut tr,
+            "good to meet you appreciate you carving out ten minutes",
+            false,
+        );
+        assert!(matches!(out1, IngestOutcome::Committed(2, "line-spoken")));
+
+        // Pure delayed final of Line 1 must not pollute Line 2's buffer
+        let out2 = ingest_transcript(
+            &mut tr,
+            "good to meet you appreciate you carving out ten minutes",
+            true,
+        );
+        assert!(matches!(out2, IngestOutcome::Idle));
+        assert_eq!(tr.spoken_buffer(), "");
+        assert_eq!(tr.active_id(), 2);
+    }
+
+    #[test]
+    fn run_on_interim_after_live_advance_seeds_next_line_partial() {
+        let mut tr = call1_tracker();
+        let out = ingest_transcript(
+            &mut tr,
+            "good to meet you appreciate you carving out ten minutes just to set the stage",
+            false,
+        );
+        assert!(matches!(out, IngestOutcome::Committed(2, "line-spoken")));
+        assert_eq!(tr.active_id(), 2);
+        assert!(
+            tr.spoken_buffer().contains("stage") && !tr.spoken_buffer().contains("appreciate"),
+            "run-on tail should immediately seed Line 2 partial: '{}'",
+            tr.spoken_buffer()
+        );
+    }
+
+    #[test]
+    fn stage1_confident_distant_forward_jump_is_clamped_to_max_plus_two() {
+        let mut tr = call1_tracker();
+        assert_eq!(tr.active_id(), 1);
+
+        // Distant forward jump (1 -> 15) must be clamped/held
+        assert_eq!(apply_stage1_confident(&mut tr, 15), None);
+        assert_eq!(tr.active_id(), 1);
+
+        // Sequential +2 jump (1 -> 3) is allowed
+        assert_eq!(
+            apply_stage1_confident(&mut tr, 3),
+            Some((3, "stage1-local"))
+        );
+        assert_eq!(tr.active_id(), 3);
+
+        // Sequential +1 jump (3 -> 4) is allowed
+        assert_eq!(
+            apply_stage1_confident(&mut tr, 4),
+            Some((4, "stage1-local"))
+        );
+        assert_eq!(tr.active_id(), 4);
+    }
+
+    #[test]
+    fn stage1_confident_backward_jump_requires_three_confirmations() {
+        let mut tr = call1_tracker();
+        tr.jump_to(20);
+        assert_eq!(tr.active_id(), 20);
+
+        // Even a confident Stage 1 backward match cannot yank the highlight on 1 or 2 hits
+        assert_eq!(apply_stage1_confident(&mut tr, 8), None);
+        assert_eq!(tr.active_id(), 20);
+        assert_eq!(apply_stage1_confident(&mut tr, 8), None);
+        assert_eq!(tr.active_id(), 20);
+
+        // 3rd consecutive confirmation commits intentionally
+        assert_eq!(
+            apply_stage1_confident(&mut tr, 8),
+            Some((8, "stage1-local-backward"))
+        );
+        assert_eq!(tr.active_id(), 8);
+    }
+
+    #[test]
+    fn llm_proposal_is_rejected_if_active_moved_while_in_flight() {
+        let mut tr = call1_tracker();
+        tr.jump_to(5);
+
+        // Simulate LLM request started at active=3 returning proposal=4 after user jumped to 5
+        assert_eq!(apply_llm_proposal(&mut tr, 3, 4, true), None);
+        assert_eq!(tr.active_id(), 5);
+
+        // Out-of-order LLM jump (5 -> 12) is rejected
+        assert_eq!(apply_llm_proposal(&mut tr, 5, 12, true), None);
+        assert_eq!(tr.active_id(), 5);
+
+        // Valid sequential LLM proposal (5 -> 6) requires 2 confirmations (hysteresis)
+        assert_eq!(apply_llm_proposal(&mut tr, 5, 6, true), None);
+        assert_eq!(
+            apply_llm_proposal(&mut tr, 5, 6, true),
+            Some((6, "stage2-llm"))
+        );
+        assert_eq!(tr.active_id(), 6);
+    }
+
+    #[test]
+    fn line_step_handles_non_contiguous_coldcall_ids() {
+        let cold = load_script_by_type("coldcall").expect("coldcall fixture loads");
+        // Cold call jumps from ID 1 to ID 3 (no ID 2); index step is still +1
+        assert_eq!(line_step(&cold.lines, 1, 3), Some(1));
+        assert_eq!(line_step(&cold.lines, 1, 4), Some(2));
+        assert_eq!(line_step(&cold.lines, 1, 5), Some(3));
+    }
 }
